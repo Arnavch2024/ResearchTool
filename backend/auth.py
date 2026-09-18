@@ -175,14 +175,23 @@ def login():
 def me():
     """Return the current user's profile from the JWT."""
     db = get_db()
-    user = db.users.find_one({"_id": ObjectId(g.user_id)})
+    user = None
+    try:
+        if ObjectId.is_valid(g.user_id):
+            user = db.users.find_one({"_id": ObjectId(g.user_id)})
+    except Exception:
+        pass
+
+    if not user:
+        user = db.users.find_one({"_id": g.user_id}) or db.users.find_one({"email": g.user_email})
+
     if not user:
         return jsonify({"error": "User not found"}), 404
 
     return jsonify({
         "user": {
             "id": str(user["_id"]),
-            "name": user["name"],
+            "name": user.get("name", "Scholar"),
             "email": user["email"],
         },
     })

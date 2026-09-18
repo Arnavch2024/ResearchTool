@@ -263,92 +263,205 @@ body::after {
 
 /* ─── Sidebar ────────────────────────────────────────────────────────────── */
 .sidebar {
-  width: 268px;
+  width: 280px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  padding: 14px;
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.015), transparent 40%),
-    var(--panel);
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 40%),
+    var(--ink-2);
   border-right: 1px solid var(--rule);
   position: relative;
+  overflow-y: auto;
 }
 
-.sidebar::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 23px,
-    rgba(236,230,214,0.015) 23px,
-    rgba(236,230,214,0.015) 24px
-  );
+.side-card {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
 
-.side-block { padding: 16px 14px 8px; position: relative; }
+.side-card--muted {
+  background: rgba(25, 23, 19, 0.6);
+  border-color: var(--rule);
+  margin-top: auto;
+}
 
-.side-label {
+.side-card-title {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--faint);
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.cap-row {
+/* ─── Paper Upload Dropzone ──────────────────────────────────────────────── */
+.dropzone {
+  background: var(--ink-3);
+  border: 1px dashed var(--rule-2);
+  border-radius: 6px;
+  padding: 16px 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.dropzone:hover,
+.dropzone.is-drag {
+  border-color: var(--brass);
+  background: var(--brass-dim);
+}
+
+.dropzone.is-done {
+  border-style: solid;
+  border-color: rgba(138, 163, 122, 0.4);
+  background: var(--moss-dim);
+  padding: 10px 12px;
+}
+
+.btn-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--rust);
+  background: var(--rust-dim);
+  border: 1px solid rgba(197, 123, 90, 0.3);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-clear:hover {
+  background: rgba(197, 123, 90, 0.22);
+  border-color: var(--rust);
+}
+
+/* ─── Sidebar Capabilities List ──────────────────────────────────────────── */
+.side-caps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.side-cap-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 4px;
+  padding: 7px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: inherit;
+  font-family: inherit;
 }
 
-.cap-ico {
-  width: 26px;
-  height: 26px;
+.side-cap-row:hover {
+  background: var(--panel-2);
+  border-color: var(--rule);
+}
+
+.side-cap-row.is-active {
+  background: var(--brass-dim);
+  border-color: var(--brass-line);
+}
+
+.side-cap-icon {
+  width: 24px;
+  height: 24px;
   border-radius: 5px;
-  display: grid;
-  place-items: center;
-  background: rgba(0,0,0,0.25);
+  background: rgba(0,0,0,0.3);
   border: 1px solid var(--rule);
   color: var(--brass);
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
+  transition: all 0.15s ease;
 }
 
-.cap-row strong {
-  display: block;
-  font-size: 12px;
+.side-cap-row.is-active .side-cap-icon {
+  background: var(--brass);
+  color: var(--brass-ink);
+  border-color: #9a7d4c;
+}
+
+.side-cap-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.side-cap-label {
+  font-size: 11.5px;
   font-weight: 500;
-  color: var(--paper-2);
+  color: var(--paper);
+  line-height: 1.25;
 }
 
-.cap-row span {
-  display: block;
+.side-cap-row.is-active .side-cap-label {
+  color: var(--brass-2);
+  font-weight: 600;
+}
+
+.side-cap-desc {
   font-size: 10px;
-  color: var(--faint);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25;
+  margin-top: 1px;
 }
 
-.side-foot {
-  margin-top: auto;
-  padding: 12px 14px 14px;
-  border-top: 1px solid var(--rule);
+/* ─── Sidebar System Status ──────────────────────────────────────────────── */
+.side-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.side-status-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--faint);
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.35;
 }
 
-.doc-card {
-  margin: 0 14px 8px;
-  padding: 10px 12px;
-  background: var(--moss-dim);
-  border: 1px solid rgba(138,163,122,0.22);
-  border-radius: 8px;
+.side-status-item strong {
+  color: var(--paper-2);
+  font-weight: 500;
+}
+
+.status-dot-sm {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--moss);
+  box-shadow: 0 0 6px var(--moss);
+  flex-shrink: 0;
 }
 
 /* ─── Buttons ────────────────────────────────────────────────────────────── */
