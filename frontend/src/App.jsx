@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import PaperUpload from './components/PaperUpload'
 import ChatInterface from './components/ChatInterface'
@@ -58,6 +58,7 @@ export default function App() {
           </div>
 
           <div className="nav-end">
+            <PrivacyBadge />
             <span className="nav-meta">llama-3.3-70b</span>
             <span className="status-dot" title="Session live" />
           </div>
@@ -164,5 +165,68 @@ export default function App() {
         )}
       </div>
     </ToastProvider>
+  )
+}
+
+/* ─── Privacy Badge Component ─────────────────────────────────────────── */
+
+function PrivacyBadge() {
+  const [show, setShow] = useState(false)
+  const [policy, setPolicy] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/privacy')
+      .then(r => r.json())
+      .then(setPolicy)
+      .catch(() => {})
+  }, [])
+
+  return (
+    <div className="privacy-badge-wrap">
+      <button
+        className="privacy-badge"
+        onClick={() => setShow(!show)}
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        title="Privacy & Security"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+        <span>Private</span>
+      </button>
+      {show && (
+        <div className="privacy-tooltip" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+          <div className="privacy-tooltip-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--moss)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            Privacy &amp; Security
+          </div>
+          <div className="privacy-tooltip-items">
+            <div className="privacy-item privacy-item--good">
+              <span className="privacy-dot" />Your prompts are <strong>never used for AI training</strong>
+            </div>
+            <div className="privacy-item privacy-item--good">
+              <span className="privacy-dot" />All data is <strong>ephemeral</strong> — cleared on session end
+            </div>
+            <div className="privacy-item privacy-item--good">
+              <span className="privacy-dot" />PII auto-redacted before reaching the LLM
+            </div>
+            <div className="privacy-item privacy-item--good">
+              <span className="privacy-dot" />No data stored on disk
+            </div>
+            <div className="privacy-item privacy-item--good">
+              <span className="privacy-dot" />Rate-limited &amp; input-validated API
+            </div>
+          </div>
+          {policy && (
+            <div className="privacy-provider">
+              LLM: {policy.llm_provider?.name} · Retention: {policy.data_handling?.storage_type}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

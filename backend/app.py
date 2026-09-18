@@ -16,17 +16,33 @@ from rag.pipeline import answer_query, answer_query_vectorless
 from mcp.arxiv_tool import search_arxiv
 from mcp.github_tool import search_github
 from mcp.huggingface_tool import search_datasets, search_models
+from security import (
+    create_limiter, register_security_headers,
+    validate_session_id, validate_query, sanitize_query, validate_pdf_file,
+    touch_session, start_session_cleanup, check_session_capacity,
+    session_timestamps, ALLOWED_ORIGINS,
+)
+from privacy import get_privacy_policy, register_privacy_headers, strip_pii
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=False)
 
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex())
+
+# ─── Security & Privacy Wiring ────────────────────────────────────────────────
+limiter = create_limiter(app)
+register_security_headers(app)
+register_privacy_headers(app)
 
 # In-memory store per session
 stores: dict[str, VectorStore] = {}
 context_stores: dict[str, ContextStore] = {}   # vectorless RAG
 rag_modes: dict[str, str] = {}                  # "vector" or "vectorless"
 chat_histories: dict[str, list] = {}
+
+# Launch background session cleanup daemon
+start_session_cleanup(stores, context_stores, rag_modes, chat_histories)
 
 _groq_client = None
 
@@ -385,6 +401,7 @@ def _synthesize_mcp_only(query: str, mcp_context: str, history: list) -> tuple[s
 # ─── RAG Endpoints ────────────────────────────────────────────────────────────
 
 @app.route("/api/upload", methods=["POST"])
+@limiter.limit("5 per minute")
 def upload_pdf():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -392,7 +409,21 @@ def upload_pdf():
     file = request.files["file"]
     session_id = request.form.get("session_id", "default")
 
+    # ── Security: validate session ID format ──
+    if not validate_session_id(session_id):
+        return jsonify({"error": "Invalid session ID format"}), 400
+
+    # ── Security: check session capacity ──
+    if session_id not in session_timestamps and not check_session_capacity():
+        return jsonify({"error": "Server is at capacity. Please try again later."}), 503
+
+    # ── Security: validate file type (extension + magic bytes) ──
+    valid, err = validate_pdf_file(file)
+    if not valid:
+        return jsonify({"error": err}), 400
+
     parsed = parse_pdf(file.read())
+    touch_session(session_id)
 
     # Auto-select RAG mode based on visual content detection
     if parsed.get("has_visuals", False):
@@ -427,14 +458,27 @@ def upload_pdf():
 
 
 @app.route("/api/chat", methods=["POST"])
+@limiter.limit("20 per minute")
 def chat():
     """Agentic chat: auto-route to RAG / MCP tools / architecture / clarify."""
     data = request.json
     query = data.get("query", "").strip()
     session_id = data.get("session_id", "default")
 
-    if not query:
-        return jsonify({"error": "Empty query"}), 400
+    # ── Security: validate session ID ──
+    if not validate_session_id(session_id):
+        return jsonify({"error": "Invalid session ID format"}), 400
+
+    # ── Security: validate & sanitize query ──
+    valid, err = validate_query(query)
+    if not valid:
+        return jsonify({"error": err}), 400
+    query = sanitize_query(query)
+
+    # ── Privacy: strip PII before it reaches the LLM ──
+    query = strip_pii(query)
+
+    touch_session(session_id)
 
     vs = stores.get(session_id)
     cs = context_stores.get(session_id)
@@ -551,12 +595,14 @@ def clear_session(session_id):
     context_stores.pop(session_id, None)
     rag_modes.pop(session_id, None)
     chat_histories.pop(session_id, None)
+    session_timestamps.pop(session_id, None)
     return jsonify({"message": "Session cleared"})
 
 
 # ─── MCP Tool Endpoints (kept for direct access / debugging) ──────────────────
 
 @app.route("/api/mcp/arxiv", methods=["GET"])
+@limiter.limit("30 per minute")
 def arxiv():
     query = request.args.get("q", "")
     if not query:
@@ -568,6 +614,7 @@ def arxiv():
 
 
 @app.route("/api/mcp/github", methods=["GET"])
+@limiter.limit("30 per minute")
 def github():
     query = request.args.get("q", "")
     if not query:
@@ -579,6 +626,7 @@ def github():
 
 
 @app.route("/api/mcp/huggingface/datasets", methods=["GET"])
+@limiter.limit("30 per minute")
 def hf_datasets():
     query = request.args.get("q", "")
     try:
@@ -588,6 +636,7 @@ def hf_datasets():
 
 
 @app.route("/api/mcp/huggingface/models", methods=["GET"])
+@limiter.limit("30 per minute")
 def hf_models():
     query = request.args.get("q", "")
     try:
@@ -611,11 +660,25 @@ def generate_architecture():
         return jsonify({"error": str(e)}), 500
 
 
+# ─── Privacy Endpoint ─────────────────────────────────────────────────────────
+
+@app.route("/api/privacy", methods=["GET"])
+def privacy_policy():
+    """Return the application's data privacy policy as JSON."""
+    return jsonify(get_privacy_policy())
+
+
 # ─── Error handlers ───────────────────────────────────────────────────────────
 
 @app.errorhandler(413)
 def too_large(e):
     return jsonify({"error": "File too large. Maximum size is 20 MB."}), 413
+
+
+@app.errorhandler(500)
+def internal_error(e):
+    # Never leak stack traces in production
+    return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/health")
@@ -624,4 +687,5 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    debug = os.environ.get("FLASK_DEBUG", "true").lower() in ("true", "1")
+    app.run(debug=debug, port=5000)
