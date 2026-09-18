@@ -195,8 +195,8 @@ function InlineArchDiagram({ archData, onExpand }) {
         <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--paper-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
           <IcoNodes size={12} /> {archData.title}
         </span>
-        <button onClick={onExpand} className="btn btn-ghost" style={{ height: 24, padding: '0 8px', fontSize: 11 }}>
-          <IcoExpand size={10} /> Expand
+        <button onClick={onExpand} className="btn btn-ghost" style={{ height: 24, padding: '0 8px', fontSize: 11, gap: 4 }}>
+          <IcoNodes size={11} /> Open in Studio ↗
         </button>
       </div>
 

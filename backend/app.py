@@ -12,7 +12,13 @@ from rag.parser import parse_pdf
 from rag.splitter import split_text
 from rag.vectorstore import VectorStore
 from rag.context_store import ContextStore
-from rag.pipeline import answer_query, answer_query_vectorless
+from rag.pipeline import (
+    answer_query,
+    answer_query_vectorless,
+    get_groq,
+    LLM_MODEL,
+    FAST_MODEL,
+)
 from mcp.arxiv_tool import search_arxiv
 from mcp.github_tool import search_github
 from mcp.huggingface_tool import search_datasets, search_models
@@ -56,11 +62,17 @@ def get_groq():
 
 
 def strip_code_fences(text: str) -> str:
-    """Strip markdown code fences from a string."""
-    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    """Extract first valid JSON object or strip markdown code fences."""
+    t = text.strip()
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", t)
     if match:
-        return match.group(1).strip()
-    return text.strip()
+        t = match.group(1).strip()
+    # Extract bounding braces if there is any surrounding text
+    brace_start = t.find("{")
+    brace_end = t.rfind("}")
+    if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
+        t = t[brace_start:brace_end + 1].strip()
+    return t
 
 
 # ─── Intent Router ────────────────────────────────────────────────────────────
@@ -168,7 +180,7 @@ Output ONLY valid JSON (no markdown, no explanation):
 }"""
 
         resp = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=FAST_MODEL,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": f"Query: {query}\nDocument loaded: {has_doc}"},
@@ -345,7 +357,7 @@ def _generate_architecture_internal(prompt: str, store) -> dict:
 
     client = get_groq()
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=LLM_MODEL,
         messages=[
             {"role": "system", "content": ARCH_SYSTEM_PROMPT},
             {
@@ -387,7 +399,7 @@ def _synthesize_mcp_only(query: str, mcp_context: str, history: list) -> tuple[s
         },
     ]
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=LLM_MODEL,
         messages=messages,
         temperature=0.2,
         max_tokens=768,

@@ -3,15 +3,18 @@ RAG pipeline: retrieve → rerank → generate.
 Master system prompt covers: paper Q&A, implementation guidance, external source synthesis.
 """
 import os
+from typing import Optional
 from groq import Groq
 from .vectorstore import VectorStore
 from .context_store import ContextStore
 from .reranker import rerank
 
-_groq_client = None
+_groq_client: Optional[Groq] = None
+LLM_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+FAST_MODEL = os.environ.get("GROQ_FAST_MODEL", "openai/gpt-oss-20b")
 
 
-def get_groq():
+def get_groq() -> Groq:
     global _groq_client
     if _groq_client is None:
         _groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
@@ -166,7 +169,7 @@ def answer_query(
     # Generate
     client = get_groq()
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=LLM_MODEL,
         messages=messages,
         temperature=0.2,
         max_tokens=1024,
@@ -319,7 +322,7 @@ def answer_query_vectorless(
     # Generate
     client = get_groq()
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=LLM_MODEL,
         messages=messages,
         temperature=0.2,
         max_tokens=1024,

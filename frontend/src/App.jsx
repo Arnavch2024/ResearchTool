@@ -3,25 +3,35 @@ import { v4 as uuidv4 } from 'uuid'
 import PaperUpload from './components/PaperUpload'
 import ChatInterface from './components/ChatInterface'
 import ArchitectureVisualization from './components/ArchitectureVisualization'
+import MCPSearch from './components/MCPSearch'
+import PrototypeBuilder from './components/PrototypeBuilder'
 import { ToastProvider } from './components/Toast'
 import { clearSession } from './services/api'
 import { Mark, IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoClose } from './components/Icons'
 
 const SESSION_ID = uuidv4()
 
-const CAPS = [
-  { icon: IcoPaper,  label: 'Paper Q&A',      desc: 'Ask anything about your doc' },
-  { icon: IcoSearch, label: 'ArXiv Search',   desc: 'Find related research papers' },
-  { icon: IcoCode,   label: 'GitHub Code',    desc: 'Find implementations' },
-  { icon: IcoBox,    label: 'HuggingFace',    desc: 'Datasets & model search' },
-  { icon: IcoNodes,  label: 'Architecture',   desc: 'Auto-generate diagrams' },
-  { icon: IcoWrench, label: 'Implementation', desc: 'Code guidance from paper' },
+const TABS = [
+  { id: 'chat',         label: 'Research Assistant',  icon: IcoPaper,  desc: 'Q&A & context search' },
+  { id: 'architecture', label: 'Architecture Studio', icon: IcoNodes,  desc: 'Interactive diagrams' },
+  { id: 'search',       label: 'Ecosystem Search',    icon: IcoSearch, desc: 'ArXiv, GitHub, HF' },
+  { id: 'prototype',    label: 'Prototype Builder',   icon: IcoWrench, desc: 'Live React sandbox' },
+]
+
+const SIDEBAR_CAPS = [
+  { tab: 'chat',         icon: IcoPaper,  label: 'Paper Q&A',      desc: 'Ask anything about your doc' },
+  { tab: 'architecture', icon: IcoNodes,  label: 'Architecture',   desc: 'Interactive flow diagrams' },
+  { tab: 'search',       icon: IcoSearch, label: 'ArXiv Search',   desc: 'Find related research papers' },
+  { tab: 'search',       icon: IcoCode,   label: 'GitHub Code',    desc: 'Find implementations' },
+  { tab: 'search',       icon: IcoBox,    label: 'HuggingFace',    desc: 'Datasets & model search' },
+  { tab: 'prototype',    icon: IcoWrench, label: 'Implementation', desc: 'Generate React prototypes' },
 ]
 
 export default function App() {
-  const [hasDoc, setHasDoc]   = useState(false)
-  const [docInfo, setDocInfo] = useState(null)
-  const [archModal, setArchModal] = useState(null)
+  const [activeTab, setActiveTab] = useState('chat')
+  const [hasDoc, setHasDoc]       = useState(false)
+  const [docInfo, setDocInfo]     = useState(null)
+  const [archData, setArchData]   = useState(null)
 
   function onIndexed(info) {
     setHasDoc(true)
@@ -32,6 +42,12 @@ export default function App() {
     await clearSession(SESSION_ID)
     setHasDoc(false)
     setDocInfo(null)
+    setArchData(null)
+  }
+
+  function handleOpenArchFromChat(diagram) {
+    setArchData(diagram)
+    setActiveTab('architecture')
   }
 
   return (
@@ -42,19 +58,35 @@ export default function App() {
             <div className="nav-mark"><Mark /></div>
             <div>
               <div className="nav-wordmark"><em>Research</em> RAG</div>
-              <div className="nav-sub">Library terminal</div>
+              <div className="nav-sub">Studio &amp; Terminal</div>
             </div>
           </div>
 
           <div className="nav-center">
-            <div style={{
-              fontSize: 11,
-              color: 'var(--faint)',
-              letterSpacing: '0.1em',
-              textTransform: 'uppercase',
-            }}>
-              Paper · ArXiv · GitHub · HuggingFace · Architecture
-            </div>
+            {/* Top Workspace Navigation Tabs */}
+            <nav className="nav-tabs" role="tablist">
+              {TABS.map(tab => {
+                const Icon = tab.icon
+                const isActive = activeTab === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`nav-tab-btn ${isActive ? 'active' : ''}`}
+                  >
+                    <Icon size={13} />
+                    <span>{tab.label}</span>
+                    {tab.id === 'architecture' && archData?.nodes?.length > 0 && (
+                      <span className="tab-pill">
+                        {archData.nodes.length}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </nav>
           </div>
 
           <div className="nav-end">
@@ -110,9 +142,14 @@ export default function App() {
             )}
 
             <div className="side-block" style={{ flex: 1 }}>
-              <div className="side-label">Capabilities</div>
-              {CAPS.map(cap => (
-                <div key={cap.label} className="cap-row">
+              <div className="side-label">Workspace Tools</div>
+              {SIDEBAR_CAPS.map((cap, i) => (
+                <div
+                  key={i}
+                  className={`cap-row ${activeTab === cap.tab ? 'cap-row-active' : ''}`}
+                  onClick={() => setActiveTab(cap.tab)}
+                  style={{ cursor: 'pointer' }}
+                >
                   <div className="cap-ico"><cap.icon size={13} /></div>
                   <div>
                     <strong>{cap.label}</strong>
@@ -128,41 +165,38 @@ export default function App() {
             </div>
           </aside>
 
-          <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-            <ChatInterface
-              sessionId={SESSION_ID}
-              hasDoc={hasDoc}
-              onOpenArch={setArchModal}
-            />
-          </main>
-        </div>
-
-        {archModal && (
-          <div className="modal-scrim">
-            <div className="modal-bar">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div className="cap-ico"><IcoNodes size={13} /></div>
-                <div>
-                  <div style={{ fontFamily: 'var(--serif)', fontSize: 15, color: 'var(--paper)' }}>
-                    {archModal.title || 'Architecture diagram'}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--faint)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                    {archModal.nodes?.length} nodes · {archModal.edges?.length} edges
-                  </div>
-                </div>
-              </div>
-              <button onClick={() => setArchModal(null)} className="btn btn-ghost">
-                <IcoClose size={12} /> Close
-              </button>
-            </div>
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <ArchitectureVisualization
+          <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, position: 'relative' }}>
+            {/* Tab 1: Research Chat */}
+            <div style={{ display: activeTab === 'chat' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <ChatInterface
                 sessionId={SESSION_ID}
-                preloadedData={archModal}
+                hasDoc={hasDoc}
+                onOpenArch={handleOpenArchFromChat}
               />
             </div>
-          </div>
-        )}
+
+            {/* Tab 2: Architecture Studio */}
+            <div style={{ display: activeTab === 'architecture' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <ArchitectureVisualization
+                sessionId={SESSION_ID}
+                hasDoc={hasDoc}
+                docInfo={docInfo}
+                sharedArchData={archData}
+                onUpdateArchData={setArchData}
+              />
+            </div>
+
+            {/* Tab 3: Ecosystem Search */}
+            <div style={{ display: activeTab === 'search' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <MCPSearch />
+            </div>
+
+            {/* Tab 4: Prototype Builder */}
+            <div style={{ display: activeTab === 'prototype' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <PrototypeBuilder sessionId={SESSION_ID} />
+            </div>
+          </main>
+        </div>
       </div>
     </ToastProvider>
   )

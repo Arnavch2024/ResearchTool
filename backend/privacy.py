@@ -102,8 +102,13 @@ PRIVACY_POLICY = {
 
 
 def get_privacy_policy() -> dict:
-    """Return the privacy policy dict, with live PII-stripping status."""
+    """Return the privacy policy dict, with live PII-stripping status and model name."""
     policy = PRIVACY_POLICY.copy()
+    model_name = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+    policy["llm_provider"] = {
+        **PRIVACY_POLICY["llm_provider"],
+        "model": model_name,
+    }
     policy["security_measures"] = {
         **PRIVACY_POLICY["security_measures"],
         "pii_redaction_active": should_strip_pii(),
