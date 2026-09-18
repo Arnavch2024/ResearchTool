@@ -109,3 +109,63 @@ export async function getSessions() {
   if (!res.ok) return []
   return res.json()
 }
+
+export async function searchArxiv(query, n = 5) {
+  const res = await fetch(`${BASE}/mcp/arxiv?q=${encodeURIComponent(query)}&n=${n}`)
+  if (!res.ok) throw new Error((await res.json()).error)
+  const data = await res.json()
+  return data.results
+}
+
+export async function searchGitHub(query, n = 5) {
+  const res = await fetch(`${BASE}/mcp/github?q=${encodeURIComponent(query)}&n=${n}`)
+  if (!res.ok) throw new Error((await res.json()).error)
+  const data = await res.json()
+  return data.results
+}
+
+export async function searchHFDatasets(query, n = 5) {
+  const res = await fetch(`${BASE}/mcp/huggingface/datasets?q=${encodeURIComponent(query)}&n=${n}`)
+  if (!res.ok) throw new Error((await res.json()).error)
+  const data = await res.json()
+  return data.results
+}
+
+export async function searchHFModels(query, n = 5) {
+  const res = await fetch(`${BASE}/mcp/huggingface/models?q=${encodeURIComponent(query)}&n=${n}`)
+  if (!res.ok) throw new Error((await res.json()).error)
+  const data = await res.json()
+  return data.results
+}
+
+export async function generatePrototype(description, sessionId) {
+  const res = await fetch(`${BASE}/prototype`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ description, session_id: sessionId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || 'Failed to generate prototype')
+  }
+  return res.json()
+}
+
+export async function generateArchitecture(prompt, sessionId) {
+  const res = await fetch(`${BASE}/architecture`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ prompt, session_id: sessionId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || 'Failed to generate architecture diagram')
+  }
+  return res.json()
+}

@@ -775,6 +775,35 @@ def generate_architecture():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/prototype", methods=["POST"])
+@login_required
+def generate_prototype_endpoint():
+    data = request.json or {}
+    description = data.get("description", "").strip()
+    try:
+        groq = get_groq()
+        resp = groq.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an expert React UI engineer. Given a description of a machine learning or technical concept, "
+                        "generate a clean, fully working, self-contained React functional component named `Component`. "
+                        "Use modern inline styles or standard CSS variables. Use only standard React hooks (useState, useEffect, useMemo, etc.). "
+                        "Output ONLY executable JavaScript/JSX code."
+                    ),
+                },
+                {"role": "user", "content": description},
+            ],
+            temperature=0.2,
+        )
+        code = resp.choices[0].message.content
+        return jsonify({"code": code})
+    except Exception as e:
+        return jsonify({"error": f"Prototype generation failed: {str(e)}"}), 500
+
+
 # ─── Privacy Endpoint ─────────────────────────────────────────────────────────
 
 @app.route("/api/privacy", methods=["GET"])
