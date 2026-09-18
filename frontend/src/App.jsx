@@ -5,7 +5,9 @@ import ChatInterface from './components/ChatInterface'
 import ArchitectureVisualization from './components/ArchitectureVisualization'
 import MCPSearch from './components/MCPSearch'
 import PrototypeBuilder from './components/PrototypeBuilder'
+import LandingPage from './components/LandingPage'
 import { ToastProvider } from './components/Toast'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { clearSession } from './services/api'
 import { Mark, IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoClose } from './components/Icons'
 
@@ -27,7 +29,8 @@ const SIDEBAR_CAPS = [
   { tab: 'prototype',    icon: IcoWrench, label: 'Implementation', desc: 'Generate React prototypes' },
 ]
 
-export default function App() {
+function Workspace() {
+  const { user, logout } = useAuth()
   const [activeTab, setActiveTab] = useState('chat')
   const [hasDoc, setHasDoc]       = useState(false)
   const [docInfo, setDocInfo]     = useState(null)
@@ -51,153 +54,196 @@ export default function App() {
   }
 
   return (
-    <ToastProvider>
-      <div className="app-shell">
-        <header className="navbar">
-          <div className="nav-brand">
-            <div className="nav-mark"><Mark /></div>
-            <div>
-              <div className="nav-wordmark"><em>Research</em> RAG</div>
-              <div className="nav-sub">Studio &amp; Terminal</div>
-            </div>
+    <div className="app-shell">
+      <header className="navbar">
+        <div className="nav-brand">
+          <div className="nav-mark"><Mark /></div>
+          <div>
+            <div className="nav-wordmark"><em>Research</em> RAG</div>
+            <div className="nav-sub">Studio &amp; Terminal</div>
+          </div>
+        </div>
+
+        <div className="nav-center">
+          {/* Top Workspace Navigation Tabs */}
+          <nav className="nav-tabs" role="tablist">
+            {TABS.map(tab => {
+              const Icon = tab.icon
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`nav-tab-btn ${isActive ? 'active' : ''}`}
+                >
+                  <Icon size={13} />
+                  <span>{tab.label}</span>
+                  {tab.id === 'architecture' && archData?.nodes?.length > 0 && (
+                    <span className="tab-pill">
+                      {archData.nodes.length}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </nav>
+        </div>
+
+        <div className="nav-end">
+          <PrivacyBadge />
+          
+          {/* User Profile Pill */}
+          <div className="nav-user-pill">
+            <span className="user-avatar">{user?.name ? user.name.charAt(0).toUpperCase() : 'U'}</span>
+            <span className="user-name" title={user?.email}>{user?.name || user?.email || 'Scholar'}</span>
+            <button className="user-logout-btn" onClick={logout} title="Sign Out">
+              Sign out
+            </button>
           </div>
 
-          <div className="nav-center">
-            {/* Top Workspace Navigation Tabs */}
-            <nav className="nav-tabs" role="tablist">
-              {TABS.map(tab => {
-                const Icon = tab.icon
-                const isActive = activeTab === tab.id
+          <span className="nav-meta">gpt-oss-120b</span>
+          <span className="status-dot" title="Session live" />
+        </div>
+      </header>
+
+      <div className="app-body">
+        <aside className="sidebar">
+          {/* Document upload / info */}
+          <div className="side-card">
+            <div className="side-card-title">Active Document</div>
+            <PaperUpload
+              sessionId={SESSION_ID}
+              onIndexed={onIndexed}
+              hasDoc={hasDoc}
+              docInfo={docInfo}
+            />
+            {hasDoc && (
+              <button className="btn-clear" onClick={handleClear}>
+                <IcoClose size={12} /> Clear document
+              </button>
+            )}
+          </div>
+
+          {/* Quick tab jump shortcuts */}
+          <div className="side-card">
+            <div className="side-card-title">Capabilities</div>
+            <div className="side-caps">
+              {SIDEBAR_CAPS.map((cap, i) => {
+                const Icon = cap.icon
+                const isActive = activeTab === cap.tab
                 return (
                   <button
-                    key={tab.id}
-                    role="tab"
-                    aria-selected={isActive}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`nav-tab-btn ${isActive ? 'active' : ''}`}
+                    key={i}
+                    className={`side-cap-row ${isActive ? 'is-active' : ''}`}
+                    onClick={() => setActiveTab(cap.tab)}
                   >
-                    <Icon size={13} />
-                    <span>{tab.label}</span>
-                    {tab.id === 'architecture' && archData?.nodes?.length > 0 && (
-                      <span className="tab-pill">
-                        {archData.nodes.length}
-                      </span>
-                    )}
+                    <span className="side-cap-icon"><Icon size={13} /></span>
+                    <span className="side-cap-text">
+                      <span className="side-cap-label">{cap.label}</span>
+                      <span className="side-cap-desc">{cap.desc}</span>
+                    </span>
                   </button>
                 )
               })}
-            </nav>
-          </div>
-
-          <div className="nav-end">
-            <PrivacyBadge />
-            <span className="nav-meta">llama-3.3-70b</span>
-            <span className="status-dot" title="Session live" />
-          </div>
-        </header>
-
-        <div className="app-body">
-          <aside className="sidebar">
-            <div className="side-block">
-              <div className="side-label">Research paper</div>
-              <PaperUpload sessionId={SESSION_ID} onIndexed={onIndexed} />
             </div>
+          </div>
 
-            {hasDoc && docInfo && (
-              <div className="doc-card animate-fade">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--moss)' }} />
-                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--moss)' }}>Indexed</span>
-                </div>
-                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                  <span className="tag tag-green">{docInfo.num_pages} pages</span>
-                  <span className="tag tag-accent">{docInfo.num_chunks} chunks</span>
-                </div>
-                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                  <span className="tag" style={{
-                    background: docInfo.rag_mode === 'vectorless' ? 'rgba(197,123,90,0.15)' : 'rgba(138,163,122,0.15)',
-                    color: docInfo.rag_mode === 'vectorless' ? '#c57b5a' : '#8aa37a',
-                    border: `1px solid ${docInfo.rag_mode === 'vectorless' ? 'rgba(197,123,90,0.3)' : 'rgba(138,163,122,0.3)'}`,
-                  }}>
-                    {docInfo.rag_mode === 'vectorless' ? '⚡ Vectorless RAG' : '⬡ Vector RAG'}
-                  </span>
-                  {docInfo.has_visuals && (
-                    <span className="tag" style={{
-                      background: 'rgba(196,163,106,0.12)',
-                      color: '#c4a36a',
-                      border: '1px solid rgba(196,163,106,0.25)',
-                    }}>
-                      {docInfo.visual_stats?.total_images || 0} images
-                    </span>
-                  )}
-                </div>
-                <button
-                  className="btn btn-danger"
-                  style={{ width: '100%', height: 28, fontSize: 11 }}
-                  onClick={handleClear}
-                >
-                  Clear session
-                </button>
+          <div className="side-card side-card--muted">
+            <div className="side-card-title">System Architecture</div>
+            <div className="side-status-list">
+              <div className="side-status-item">
+                <span className="status-dot-sm" />
+                <span>RAG: <strong>Hybrid FAISS + PageTree</strong></span>
               </div>
-            )}
-
-            <div className="side-block" style={{ flex: 1 }}>
-              <div className="side-label">Workspace Tools</div>
-              {SIDEBAR_CAPS.map((cap, i) => (
-                <div
-                  key={i}
-                  className={`cap-row ${activeTab === cap.tab ? 'cap-row-active' : ''}`}
-                  onClick={() => setActiveTab(cap.tab)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <div className="cap-ico"><cap.icon size={13} /></div>
-                  <div>
-                    <strong>{cap.label}</strong>
-                    <span>{cap.desc}</span>
-                  </div>
-                </div>
-              ))}
+              <div className="side-status-item">
+                <span className="status-dot-sm" />
+                <span>MCP: <strong>ArXiv · GitHub · HuggingFace</strong></span>
+              </div>
+              <div className="side-status-item">
+                <span className="status-dot-sm" />
+                <span>Persistence: <strong>MongoDB Atlas / Local</strong></span>
+              </div>
+              <div className="side-status-item">
+                <span className="status-dot-sm" />
+                <span>Privacy: <strong>Zero LLM Training</strong></span>
+              </div>
             </div>
+          </div>
+        </aside>
 
-            <div className="side-foot">
-              <span className="status-dot" />
-              {SESSION_ID.slice(0, 12)}…
-            </div>
-          </aside>
-
-          <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, position: 'relative' }}>
-            {/* Tab 1: Research Chat */}
-            <div style={{ display: activeTab === 'chat' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        <main className="main-content">
+          {/* TAB 1: Chat & Research Assistant */}
+          {activeTab === 'chat' && (
+            <div className="tab-pane">
               <ChatInterface
                 sessionId={SESSION_ID}
                 hasDoc={hasDoc}
-                onOpenArch={handleOpenArchFromChat}
+                docInfo={docInfo}
+                onOpenArchitecture={handleOpenArchFromChat}
               />
             </div>
+          )}
 
-            {/* Tab 2: Architecture Studio */}
-            <div style={{ display: activeTab === 'architecture' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          {/* TAB 2: Architecture Studio */}
+          {activeTab === 'architecture' && (
+            <div className="tab-pane tab-pane--full">
               <ArchitectureVisualization
+                data={archData}
                 sessionId={SESSION_ID}
                 hasDoc={hasDoc}
                 docInfo={docInfo}
-                sharedArchData={archData}
-                onUpdateArchData={setArchData}
+                isStudioMode={true}
               />
             </div>
+          )}
 
-            {/* Tab 3: Ecosystem Search */}
-            <div style={{ display: activeTab === 'search' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          {/* TAB 3: Ecosystem Search */}
+          {activeTab === 'search' && (
+            <div className="tab-pane">
               <MCPSearch />
             </div>
+          )}
 
-            {/* Tab 4: Prototype Builder */}
-            <div style={{ display: activeTab === 'prototype' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-              <PrototypeBuilder sessionId={SESSION_ID} />
+          {/* TAB 4: Prototype Sandbox */}
+          {activeTab === 'prototype' && (
+            <div className="tab-pane tab-pane--full">
+              <PrototypeBuilder />
             </div>
-          </main>
-        </div>
+          )}
+        </main>
       </div>
+    </div>
+  )
+}
+
+function MainApp() {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="app-loading-screen">
+        <div className="nav-mark" style={{ width: 42, height: 42 }}><Mark /></div>
+        <div className="loading-spinner" />
+        <p>Loading Research RAG Workspace...</p>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <LandingPage />
+  }
+
+  return <Workspace />
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <AuthProvider>
+        <MainApp />
+      </AuthProvider>
     </ToastProvider>
   )
 }
@@ -242,16 +288,16 @@ function PrivacyBadge() {
               <span className="privacy-dot" />Your prompts are <strong>never used for AI training</strong>
             </div>
             <div className="privacy-item privacy-item--good">
-              <span className="privacy-dot" />All data is <strong>ephemeral</strong> — cleared on session end
+              <span className="privacy-dot" />All active memory is <strong>ephemeral</strong> &amp; protected
             </div>
             <div className="privacy-item privacy-item--good">
-              <span className="privacy-dot" />PII auto-redacted before reaching the LLM
+              <span className="privacy-dot" />PII auto-redacted before reaching LLM
             </div>
             <div className="privacy-item privacy-item--good">
-              <span className="privacy-dot" />No data stored on disk
+              <span className="privacy-dot" />MongoDB user-isolated chat persistence
             </div>
             <div className="privacy-item privacy-item--good">
-              <span className="privacy-dot" />Rate-limited &amp; input-validated API
+              <span className="privacy-dot" />Rate-limited &amp; OWASP hardened API
             </div>
           </div>
           {policy && (

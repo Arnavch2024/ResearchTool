@@ -1,7 +1,8 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 import os
 import re
 import json
@@ -29,6 +30,8 @@ from security import (
     session_timestamps, ALLOWED_ORIGINS,
 )
 from privacy import get_privacy_policy, register_privacy_headers, strip_pii
+from auth import auth_bp, login_required
+from db import get_db, ping_db
 
 app = Flask(__name__)
 CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=False)
@@ -36,10 +39,11 @@ CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=False)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex())
 
-# ─── Security & Privacy Wiring ────────────────────────────────────────────────
+# ─── Security, Privacy & Auth Wiring ──────────────────────────────────────────
 limiter = create_limiter(app)
 register_security_headers(app)
 register_privacy_headers(app)
+app.register_blueprint(auth_bp)
 
 # In-memory store per session
 stores: dict[str, VectorStore] = {}
@@ -414,6 +418,7 @@ def _synthesize_mcp_only(query: str, mcp_context: str, history: list) -> tuple[s
 
 @app.route("/api/upload", methods=["POST"])
 @limiter.limit("5 per minute")
+@login_required
 def upload_pdf():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -457,6 +462,7 @@ def upload_pdf():
         num_chunks = len(chunks)
 
     chat_histories[session_id] = []
+    _ensure_session(g.user_id, session_id, doc_name=getattr(file, "filename", "document.pdf"), rag_mode=rag_modes[session_id])
 
     return jsonify({
         "message": "PDF indexed successfully",
@@ -469,11 +475,52 @@ def upload_pdf():
     })
 
 
+# ─── Chat Persistence Helpers ─────────────────────────────────────────────────
+
+def _persist_chat_message(user_id, session_id, role, content, intent=None, sources=None, arch_data=None):
+    """Save a chat message to MongoDB (fire-and-forget, never blocks the response)."""
+    try:
+        db = get_db()
+        db.chat_messages.insert_one({
+            "user_id": str(user_id),
+            "session_id": session_id,
+            "role": role,
+            "content": content,
+            "intent": intent,
+            "sources": sources,
+            "arch_data": arch_data,
+            "timestamp": datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass  # Don't let DB errors break the chat flow
+
+
+def _ensure_session(user_id, session_id, doc_name=None, rag_mode=None):
+    """Create or update a session record in MongoDB."""
+    try:
+        db = get_db()
+        db.sessions.update_one(
+            {"user_id": str(user_id), "session_id": session_id},
+            {"$set": {
+                "last_active": datetime.now(timezone.utc),
+                **({"doc_name": doc_name} if doc_name else {}),
+                **({"rag_mode": rag_mode} if rag_mode else {}),
+            },
+            "$setOnInsert": {
+                "created_at": datetime.now(timezone.utc),
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
 @app.route("/api/chat", methods=["POST"])
 @limiter.limit("20 per minute")
+@login_required
 def chat():
     """Agentic chat: auto-route to RAG / MCP tools / architecture / clarify."""
-    data = request.json
+    data = request.json or {}
     query = data.get("query", "").strip()
     session_id = data.get("session_id", "default")
 
@@ -498,19 +545,24 @@ def chat():
     has_doc = (vs is not None and vs.is_ready()) or (cs is not None and cs.is_ready())
     history = chat_histories.get(session_id, [])
 
+    _ensure_session(g.user_id, session_id, rag_mode=mode if has_doc else None)
+
     # ── Step 1: Route ──────────────────────────────────────────────────────
     route = intent_router(query, has_doc)
     intent = route["intent"]
 
     # ── Step 2a: Clarify ───────────────────────────────────────────────────
     if intent == "clarify":
+        clarify_msg = route.get(
+            "clarify_question",
+            "What would you like to do? I can answer questions about the paper, "
+            "search for related research, find code implementations, or draw architecture diagrams.",
+        )
+        _persist_chat_message(g.user_id, session_id, "user", query, intent="clarify")
+        _persist_chat_message(g.user_id, session_id, "assistant", clarify_msg, intent="clarify")
         return jsonify({
             "intent": "clarify",
-            "clarify_question": route.get(
-                "clarify_question",
-                "What would you like to do? I can answer questions about the paper, "
-                "search for related research, find code implementations, or draw architecture diagrams.",
-            ),
+            "clarify_question": clarify_msg,
             "answer": None,
             "sources": [],
             "tool_calls": [],
@@ -529,6 +581,8 @@ def chat():
             f"I've generated the **{arch_title}** diagram with {n_nodes} components. "
             "Expand the diagram below to explore it interactively."
         )
+        _persist_chat_message(g.user_id, session_id, "user", query, intent="architecture")
+        _persist_chat_message(g.user_id, session_id, "assistant", answer, intent="architecture", arch_data=arch_data)
         return jsonify({
             "intent": "architecture",
             "answer": answer,
@@ -557,6 +611,8 @@ def chat():
         history.append({"role": "user", "content": query})
         history.append({"role": "assistant", "content": result["answer"]})
         chat_histories[session_id] = history
+        _persist_chat_message(g.user_id, session_id, "user", query, intent=intent)
+        _persist_chat_message(g.user_id, session_id, "assistant", result["answer"], intent=intent, sources=result["sources"])
         return jsonify({
             "intent": intent,
             "answer": result["answer"],
@@ -573,6 +629,8 @@ def chat():
         history.append({"role": "user", "content": query})
         history.append({"role": "assistant", "content": answer})
         chat_histories[session_id] = history
+        _persist_chat_message(g.user_id, session_id, "user", query, intent=intent)
+        _persist_chat_message(g.user_id, session_id, "assistant", answer, intent=intent)
         return jsonify({
             "intent": intent,
             "answer": answer,
@@ -584,9 +642,12 @@ def chat():
         })
 
     # ── Fallback: no doc, no MCP — ask to upload ──────────────────────────
+    clarify_msg = "Please upload a PDF research paper first, or try asking me to search for papers, code, or datasets."
+    _persist_chat_message(g.user_id, session_id, "user", query, intent="clarify")
+    _persist_chat_message(g.user_id, session_id, "assistant", clarify_msg, intent="clarify")
     return jsonify({
         "intent": "clarify",
-        "clarify_question": "Please upload a PDF research paper first, or try asking me to search for papers, code, or datasets.",
+        "clarify_question": clarify_msg,
         "answer": None,
         "sources": [],
         "tool_calls": [],
@@ -597,17 +658,58 @@ def chat():
 
 
 @app.route("/api/history/<session_id>", methods=["GET"])
+@login_required
 def get_history(session_id):
-    return jsonify(chat_histories.get(session_id, []))
+    """Return chat history — from MongoDB if available, else in-memory."""
+    try:
+        db = get_db()
+        messages = list(db.chat_messages.find(
+            {"user_id": g.user_id, "session_id": session_id},
+            {"_id": 0, "user_id": 0},
+        ).sort("timestamp", 1))
+        # Convert datetimes to ISO strings for JSON
+        for m in messages:
+            if "timestamp" in m and hasattr(m["timestamp"], "isoformat"):
+                m["timestamp"] = m["timestamp"].isoformat()
+        return jsonify(messages if messages else chat_histories.get(session_id, []))
+    except Exception:
+        return jsonify(chat_histories.get(session_id, []))
+
+
+@app.route("/api/sessions", methods=["GET"])
+@login_required
+def get_sessions():
+    """List all sessions for the authenticated user."""
+    try:
+        db = get_db()
+        sessions = list(db.sessions.find(
+            {"user_id": g.user_id},
+            {"_id": 0},
+        ).sort("last_active", -1).limit(20))
+        for s in sessions:
+            for key in ("created_at", "last_active"):
+                if key in s and hasattr(s[key], "isoformat"):
+                    s[key] = s[key].isoformat()
+        return jsonify(sessions)
+    except Exception:
+        return jsonify([])
 
 
 @app.route("/api/clear/<session_id>", methods=["DELETE"])
+@login_required
 def clear_session(session_id):
     stores.pop(session_id, None)
     context_stores.pop(session_id, None)
     rag_modes.pop(session_id, None)
     chat_histories.pop(session_id, None)
     session_timestamps.pop(session_id, None)
+    # Also clear from MongoDB
+    try:
+        db = get_db()
+        db.chat_messages.delete_many({"user_id": g.user_id, "session_id": session_id})
+        db.sessions.delete_one({"user_id": g.user_id, "session_id": session_id})
+    except Exception:
+        pass
     return jsonify({"message": "Session cleared"})
 
 
@@ -660,6 +762,7 @@ def hf_models():
 # ─── Architecture (standalone endpoint kept for compatibility) ─────────────────
 
 @app.route("/api/architecture", methods=["POST"])
+@login_required
 def generate_architecture():
     data = request.json
     prompt = data.get("prompt", "")
@@ -695,9 +798,10 @@ def internal_error(e):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
+    db_ok = ping_db()
+    return jsonify({"status": "ok", "database": "connected" if db_ok else "disconnected"})
 
 
 if __name__ == "__main__":
     debug = os.environ.get("FLASK_DEBUG", "true").lower() in ("true", "1")
-    app.run(debug=debug, port=5000)
+    app.run(debug=debug, port=5000, use_reloader=False)
