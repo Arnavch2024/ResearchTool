@@ -1,7 +1,9 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
+import re
 import json
 
 load_dotenv()
@@ -9,7 +11,8 @@ load_dotenv()
 from rag.parser import parse_pdf
 from rag.splitter import split_text
 from rag.vectorstore import VectorStore
-from rag.pipeline import answer_query
+from rag.context_store import ContextStore
+from rag.pipeline import answer_query, answer_query_vectorless
 from mcp.arxiv_tool import search_arxiv
 from mcp.github_tool import search_github
 from mcp.huggingface_tool import search_datasets, search_models
@@ -17,15 +20,16 @@ from mcp.huggingface_tool import search_datasets, search_models
 app = Flask(__name__)
 CORS(app)
 
-# Limit upload size to 20 MB to prevent OOM on large PDFs
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
-# In-memory store per session (keyed by session_id)
+# In-memory store per session
 stores: dict[str, VectorStore] = {}
+context_stores: dict[str, ContextStore] = {}   # vectorless RAG
+rag_modes: dict[str, str] = {}                  # "vector" or "vectorless"
 chat_histories: dict[str, list] = {}
 
-# Shared lazy Groq client (avoids recreating it on every request)
 _groq_client = None
+
 
 def get_groq():
     global _groq_client
@@ -35,11 +39,353 @@ def get_groq():
     return _groq_client
 
 
+def strip_code_fences(text: str) -> str:
+    """Strip markdown code fences from a string."""
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
+
+# ─── Intent Router ────────────────────────────────────────────────────────────
+
+# Keyword signal sets — checked before any LLM call (zero latency)
+ARXIV_SIGNALS  = {"paper", "papers", "arxiv", "research", "publication", "published",
+                  "cite", "citing", "survey", "surveys", "literature", "preprint",
+                  "related work", "academic", "journal", "conference", "findings"}
+GITHUB_SIGNALS = {"github", "code", "implementation", "implementations", "repo",
+                  "repos", "repository", "repositories", "library", "libraries",
+                  "codebase", "open source", "open-source", "project"}
+HF_DS_SIGNALS  = {"dataset", "datasets", "training data", "benchmark", "benchmarks",
+                  "corpus", "corpora", "data split", "evaluation set", "testset"}
+HF_MDL_SIGNALS = {"huggingface", "hf model", "pretrained", "pre-trained",
+                  "model checkpoint", "model weights", "fine-tuned model",
+                  "model card", "transformer model"}
+ARCH_SIGNALS   = {"architecture", "diagram", "visualize", "visualise", "draw",
+                  "flowchart", "network diagram", "model architecture",
+                  "pipeline diagram", "show the architecture", "show architecture",
+                  "show me the model", "design diagram"}
+
+
+def _clean_search_query(query: str) -> str:
+    """Clean query of conversational filler and tool keywords for search APIs."""
+    q = query.lower()
+    # Remove common punctuation
+    q = re.sub(r"[^\w\s\-]", " ", q)
+    
+    # Conversational phrases and keywords to remove
+    to_remove = [
+        "show me", "find papers on", "find paper on", "find", "search for", "search", "look for",
+        "are there", "tell me about", "is there", "any", "please", "can you", "could you",
+        "arxiv", "paper", "papers", "research", "publication", "published", "cite", "citing", "survey", "surveys", "literature", "preprint", "academic", "journal", "conference", "findings",
+        "github", "code", "implementation", "implementations", "repo", "repos", "repository", "repositories", "library", "libraries", "codebase", "open source", "open-source", "project",
+        "dataset", "datasets", "training data", "benchmark", "benchmarks", "corpus", "corpora",
+        "huggingface", "hf model", "pretrained", "pre-trained", "model checkpoint", "model weights", "fine-tuned model", "model card", "transformer model",
+        "of", "on", "for", "about", "with", "a", "an", "the", "in"
+    ]
+    
+    # Sort by length descending to replace multi-word phrases first
+    to_remove.sort(key=len, reverse=True)
+    
+    for phrase in to_remove:
+        # Use boundary matching for words
+        q = re.sub(r'\b' + re.escape(phrase) + r'\b', ' ', q)
+        
+    cleaned = " ".join(q.split())
+    return cleaned if cleaned else query
+
+
+def _keyword_route(query: str) -> dict | None:
+    """Fast keyword-based routing. Returns None if ambiguous."""
+    q = query.lower()
+
+    # Architecture takes priority (most specific intent)
+    if any(sig in q for sig in ARCH_SIGNALS):
+        return {"intent": "architecture", "tools": [], "search_query": query}
+
+    # MCP tool detection
+    tools = []
+    if any(sig in q for sig in ARXIV_SIGNALS):
+        tools.append("arxiv")
+    if any(sig in q for sig in GITHUB_SIGNALS):
+        tools.append("github")
+    if any(sig in q for sig in HF_DS_SIGNALS):
+        tools.append("hf_datasets")
+    if any(sig in q for sig in HF_MDL_SIGNALS):
+        tools.append("hf_models")
+
+    if tools:
+        return {"intent": "mcp", "tools": tools, "search_query": _clean_search_query(query)}
+
+    return None  # Ambiguous — fall through to LLM router
+
+
+def _llm_router(query: str, has_doc: bool) -> dict:
+    """LLM-based intent classification using llama-3.1-8b-instant (fast, cheap)."""
+    try:
+        client = get_groq()
+        system = """\
+You are a query intent classifier for an AI research assistant.
+Classify the user query into the most appropriate intent.
+
+Available intents:
+- "rag": Answer from the uploaded research paper document
+- "arxiv": Search academic papers on ArXiv
+- "github": Search code repositories on GitHub
+- "hf_datasets": Search HuggingFace datasets
+- "hf_models": Search HuggingFace model hub
+- "architecture": Generate a visual architecture diagram
+- "clarify": Query is too vague/ambiguous to act on
+
+Rules:
+- Multiple tools can apply (e.g., ["arxiv", "github"])
+- Prefer "rag" when query is about understanding content from a paper
+- Use "clarify" ONLY when the query is genuinely too short/vague to classify
+- "architecture" for requests to visualize systems, pipelines, or model structures
+
+Output ONLY valid JSON (no markdown, no explanation):
+{
+  "intent": "rag|mcp|architecture|clarify",
+  "tools": ["arxiv", "github", "hf_datasets", "hf_models"],
+  "search_query": "cleaned search query for external tools",
+  "clarify_question": "Short clarifying question (only if intent=clarify)"
+}"""
+
+        resp = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Query: {query}\nDocument loaded: {has_doc}"},
+            ],
+            temperature=0,
+            max_tokens=120,
+        )
+        raw = strip_code_fences(resp.choices[0].message.content)
+        result = json.loads(raw)
+
+        intent = result.get("intent", "rag")
+        tools  = result.get("tools", [])
+
+        # Normalise: if intent is a tool name, convert to "mcp"
+        if intent in ("arxiv", "github", "hf_datasets", "hf_models"):
+            tools = [intent] + [t for t in tools if t != intent]
+            intent = "mcp"
+
+        return {
+            "intent": intent,
+            "tools": tools,
+            "search_query": _clean_search_query(result.get("search_query", query)),
+            "clarify_question": result.get("clarify_question", "What would you like to know?"),
+        }
+    except Exception:
+        # Safe fallback
+        return {
+            "intent": "rag" if has_doc else "clarify",
+            "tools": [],
+            "search_query": query,
+            "clarify_question": "What are you looking for? I can answer questions about the paper, search for related research, find code implementations, or generate architecture diagrams.",
+        }
+
+
+def intent_router(query: str, has_doc: bool) -> dict:
+    """Route a query to the right action. Fast keyword check first, LLM fallback."""
+    route = _keyword_route(query)
+    if route:
+        # Upgrade mcp to hybrid when doc is loaded
+        if route["intent"] == "mcp" and has_doc:
+            route["intent"] = "hybrid"
+        return route
+
+    # LLM router for ambiguous queries
+    result = _llm_router(query, has_doc)
+    if result["intent"] == "mcp" and has_doc:
+        result["intent"] = "hybrid"
+    return result
+
+
+# ─── MCP Tool Dispatcher ──────────────────────────────────────────────────────
+
+TOOL_LABELS = {
+    "arxiv":       "ArXiv Papers",
+    "github":      "GitHub Repos",
+    "hf_datasets": "HuggingFace Datasets",
+    "hf_models":   "HuggingFace Models",
+}
+
+
+def _run_mcp_tools(tools: list[str], query: str) -> tuple[list[dict], str]:
+    """Run MCP tools concurrently. Returns (tool_calls_list, mcp_context_text)."""
+
+    def _call(tool_name: str) -> dict:
+        try:
+            if tool_name == "arxiv":
+                return {"tool": "arxiv", "results": search_arxiv(query, max_results=4)}
+            elif tool_name == "github":
+                return {"tool": "github", "results": search_github(query, max_results=4)}
+            elif tool_name == "hf_datasets":
+                return {"tool": "hf_datasets", "results": search_datasets(query, max_results=4)}
+            elif tool_name == "hf_models":
+                return {"tool": "hf_models", "results": search_models(query, max_results=4)}
+            return {"tool": tool_name, "results": []}
+        except Exception as e:
+            return {"tool": tool_name, "results": [], "error": str(e)}
+
+    tool_calls: list[dict] = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(_call, t): t for t in tools}
+        for future in as_completed(futures):
+            tool_calls.append(future.result())
+
+    # Build readable context block for the LLM
+    parts = []
+    for tc in tool_calls:
+        tool = tc["tool"]
+        results = tc.get("results", [])
+        if not results:
+            continue
+        block = f"=== {TOOL_LABELS.get(tool, tool).upper()} ===\n"
+        for i, r in enumerate(results, 1):
+            if tool == "arxiv":
+                block += f"{i}. {r.get('title','?')} ({r.get('year','?')})\n"
+                block += f"   Authors: {', '.join(r.get('authors', []))}\n"
+                block += f"   URL: {r.get('url','')}\n"
+                summary = r.get("summary", "")
+                if summary:
+                    block += f"   Abstract: {summary[:250]}...\n"
+            elif tool == "github":
+                block += f"{i}. {r.get('name','?')} [⭐{r.get('stars',0)} | {r.get('language','?')}]\n"
+                block += f"   URL: {r.get('url','')}\n"
+                desc = r.get("description", "")
+                if desc:
+                    block += f"   {desc[:180]}\n"
+            else:  # hf_datasets / hf_models
+                block += f"{i}. {r.get('id','?')} (↓{r.get('downloads', 0):,} downloads)\n"
+                block += f"   URL: {r.get('url','')}\n"
+                tags = r.get("tags", [])
+                if tags:
+                    block += f"   Tags: {', '.join(tags[:5])}\n"
+        parts.append(block)
+
+    return tool_calls, "\n\n".join(parts)
+
+
+# ─── Architecture System Prompt (shared) ─────────────────────────────────────
+
+ARCH_SYSTEM_PROMPT = """\
+You are an expert software architecture diagrammer specializing in AI/ML research paper analysis.
+Your task is to extract and represent the system architecture as a precise, structured JSON diagram.
+
+## Output Contract
+You MUST output ONLY a single valid JSON object. No markdown, no prose, no code fences.
+The JSON must conform exactly to this schema:
+{
+  "title": "Short descriptive name of the architecture (3-6 words)",
+  "nodes": [
+    {
+      "id": "1",
+      "label": "Component Name",
+      "type": "input|process|output|model|data|attention",
+      "description": "One sentence: what this component does"
+    }
+  ],
+  "edges": [
+    {
+      "source": "1",
+      "target": "2",
+      "label": "data flow or operation name (optional, keep short)"
+    }
+  ]
+}
+
+## Node Type Rules
+- input     : Raw inputs entering the system (text, image, tokens, embeddings)
+- data      : Datasets, databases, knowledge bases, corpora
+- process   : Transformations, encoders, decoders, layers, attention, FFN blocks
+- model     : Complete sub-models, pre-trained backbones, LLMs, fine-tuned modules
+- attention : Attention mechanisms, cross-attention, self-attention, memory modules
+- output    : Final outputs, predictions, generated sequences, scores
+
+## Quality Rules
+1. Use 6-14 nodes total — enough to be informative, not cluttered.
+2. IDs must be unique integers as strings: "1", "2", "3", ...
+3. Node labels must be concise (1-4 words), using the paper's own terminology.
+4. Edges must only reference valid node IDs that exist in the nodes array.
+5. Descriptions should explain *function*, not just restate the label.
+6. Represent actual data flow direction (left to right or top to bottom).
+7. If context is insufficient, generate a plausible general architecture for the described system."""
+
+
+def _generate_architecture_internal(prompt: str, store) -> dict:
+    """Generate architecture JSON, optionally grounded in uploaded paper."""
+    context = ""
+    if store and store.is_ready():
+        arch_query = prompt or "architecture methodology system design pipeline"
+        # ContextStore has search_for_architecture; VectorStore has search(top_k=)
+        if hasattr(store, "search_for_architecture"):
+            candidates = store.search_for_architecture(arch_query, top_k=5)
+        else:
+            candidates = store.search(arch_query, top_k=5)
+        context = "\n\n".join(c["text"] for c in candidates)
+
+    client = get_groq()
+    resp = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": ARCH_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Paper context:\n{context}\n\n"
+                    f"Generate the architecture diagram JSON for: {prompt or 'this research paper'}\n\n"
+                    "Output ONLY the JSON object. No explanations."
+                ),
+            },
+        ],
+        temperature=0.1,
+        max_tokens=1024,
+    )
+    raw = resp.choices[0].message.content
+    clean = strip_code_fences(raw)
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        return {"title": prompt or "Architecture", "nodes": [], "edges": [], "error": "Parse failed"}
+
+
+def _synthesize_mcp_only(query: str, mcp_context: str, history: list) -> tuple[str, dict]:
+    """Synthesize an answer from MCP results only (no PDF loaded)."""
+    client = get_groq()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful research assistant. "
+                "Synthesize the external search results below to answer the user's question. "
+                "Be concise, reference sources by name, and highlight the most relevant findings."
+            ),
+        },
+        *[m for m in (history or [])[-4:] if m.get("role") != "system"],
+        {
+            "role": "user",
+            "content": f"External search results:\n{mcp_context}\n\nQuestion: {query}",
+        },
+    ]
+    resp = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        temperature=0.2,
+        max_tokens=768,
+    )
+    return resp.choices[0].message.content, {
+        "prompt_tokens": resp.usage.prompt_tokens,
+        "completion_tokens": resp.usage.completion_tokens,
+    }
+
+
 # ─── RAG Endpoints ────────────────────────────────────────────────────────────
 
 @app.route("/api/upload", methods=["POST"])
 def upload_pdf():
-    """Parse PDF, chunk it, build vector index."""
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -47,24 +393,42 @@ def upload_pdf():
     session_id = request.form.get("session_id", "default")
 
     parsed = parse_pdf(file.read())
-    chunks = split_text(parsed["text"], chunk_size=512, chunk_overlap=64)
 
-    vs = VectorStore()
-    vs.build(chunks)
-    stores[session_id] = vs
+    # Auto-select RAG mode based on visual content detection
+    if parsed.get("has_visuals", False):
+        # Vectorless RAG — preserve page structure for visual PDFs
+        cs = ContextStore()
+        cs.build(parsed["pages"], parsed["text"])
+        context_stores[session_id] = cs
+        stores.pop(session_id, None)         # clear any old vector store
+        rag_modes[session_id] = "vectorless"
+        num_chunks = len(parsed["pages"])
+    else:
+        # Vector RAG — standard chunking + FAISS for text-only PDFs
+        chunks = split_text(parsed["text"], chunk_size=512, chunk_overlap=64)
+        vs = VectorStore()
+        vs.build(chunks)
+        stores[session_id] = vs
+        context_stores.pop(session_id, None)  # clear any old context store
+        rag_modes[session_id] = "vector"
+        num_chunks = len(chunks)
+
     chat_histories[session_id] = []
 
     return jsonify({
         "message": "PDF indexed successfully",
         "num_pages": parsed["num_pages"],
-        "num_chunks": len(chunks),
+        "num_chunks": num_chunks,
         "session_id": session_id,
+        "rag_mode": rag_modes[session_id],
+        "has_visuals": parsed.get("has_visuals", False),
+        "visual_stats": parsed.get("visual_stats", {}),
     })
 
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """RAG Q&A over uploaded paper."""
+    """Agentic chat: auto-route to RAG / MCP tools / architecture / clarify."""
     data = request.json
     query = data.get("query", "").strip()
     session_id = data.get("session_id", "default")
@@ -73,18 +437,107 @@ def chat():
         return jsonify({"error": "Empty query"}), 400
 
     vs = stores.get(session_id)
-    if not vs or not vs.is_ready():
-        return jsonify({"error": "No document indexed for this session"}), 400
-
+    cs = context_stores.get(session_id)
+    mode = rag_modes.get(session_id, "vector")
+    has_doc = (vs is not None and vs.is_ready()) or (cs is not None and cs.is_ready())
     history = chat_histories.get(session_id, [])
-    result = answer_query(query, vs, history)
 
-    # Update history
-    history.append({"role": "user", "content": query})
-    history.append({"role": "assistant", "content": result["answer"]})
-    chat_histories[session_id] = history
+    # ── Step 1: Route ──────────────────────────────────────────────────────
+    route = intent_router(query, has_doc)
+    intent = route["intent"]
 
-    return jsonify(result)
+    # ── Step 2a: Clarify ───────────────────────────────────────────────────
+    if intent == "clarify":
+        return jsonify({
+            "intent": "clarify",
+            "clarify_question": route.get(
+                "clarify_question",
+                "What would you like to do? I can answer questions about the paper, "
+                "search for related research, find code implementations, or draw architecture diagrams.",
+            ),
+            "answer": None,
+            "sources": [],
+            "tool_calls": [],
+            "arch_data": None,
+            "rag_mode": mode if has_doc else None,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        })
+
+    # ── Step 2b: Architecture ──────────────────────────────────────────────
+    if intent == "architecture":
+        arch_store = vs or cs  # use whichever store is available
+        arch_data = _generate_architecture_internal(query, arch_store)
+        arch_title = arch_data.get("title", "Architecture Diagram")
+        n_nodes = len(arch_data.get("nodes", []))
+        answer = (
+            f"I've generated the **{arch_title}** diagram with {n_nodes} components. "
+            "Expand the diagram below to explore it interactively."
+        )
+        return jsonify({
+            "intent": "architecture",
+            "answer": answer,
+            "arch_data": arch_data,
+            "sources": [],
+            "tool_calls": [],
+            "rag_mode": mode if has_doc else None,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        })
+
+    # ── Step 2c: MCP tool calls (concurrent) ──────────────────────────────
+    tool_calls: list[dict] = []
+    mcp_context = ""
+    if route.get("tools"):
+        tool_calls, mcp_context = _run_mcp_tools(route["tools"], route.get("search_query", query))
+
+    # ── Step 3 & 4: RAG (always run if doc loaded) ─────────────────────────
+    if has_doc:
+        if mode == "vectorless" and cs is not None:
+            # Vectorless RAG — page-level BM25
+            result = answer_query_vectorless(query, cs, history, mcp_context=mcp_context)
+        else:
+            # Vector RAG — chunk-level FAISS + reranking
+            result = answer_query(query, vs, history, mcp_context=mcp_context)
+
+        history.append({"role": "user", "content": query})
+        history.append({"role": "assistant", "content": result["answer"]})
+        chat_histories[session_id] = history
+        return jsonify({
+            "intent": intent,
+            "answer": result["answer"],
+            "sources": result["sources"],
+            "tool_calls": tool_calls,
+            "arch_data": None,
+            "rag_mode": mode,
+            "usage": result["usage"],
+        })
+
+    # ── No doc loaded — synthesise from MCP only ───────────────────────────
+    if mcp_context:
+        answer, usage = _synthesize_mcp_only(query, mcp_context, history)
+        history.append({"role": "user", "content": query})
+        history.append({"role": "assistant", "content": answer})
+        chat_histories[session_id] = history
+        return jsonify({
+            "intent": intent,
+            "answer": answer,
+            "sources": [],
+            "tool_calls": tool_calls,
+            "arch_data": None,
+            "rag_mode": None,
+            "usage": usage,
+        })
+
+    # ── Fallback: no doc, no MCP — ask to upload ──────────────────────────
+    return jsonify({
+        "intent": "clarify",
+        "clarify_question": "Please upload a PDF research paper first, or try asking me to search for papers, code, or datasets.",
+        "answer": None,
+        "sources": [],
+        "tool_calls": [],
+        "arch_data": None,
+        "rag_mode": None,
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+    })
 
 
 @app.route("/api/history/<session_id>", methods=["GET"])
@@ -95,19 +548,23 @@ def get_history(session_id):
 @app.route("/api/clear/<session_id>", methods=["DELETE"])
 def clear_session(session_id):
     stores.pop(session_id, None)
+    context_stores.pop(session_id, None)
+    rag_modes.pop(session_id, None)
     chat_histories.pop(session_id, None)
     return jsonify({"message": "Session cleared"})
 
 
-# ─── MCP Tool Endpoints ────────────────────────────────────────────────────────
+# ─── MCP Tool Endpoints (kept for direct access / debugging) ──────────────────
 
 @app.route("/api/mcp/arxiv", methods=["GET"])
 def arxiv():
     query = request.args.get("q", "")
     if not query:
         return jsonify({"error": "Missing query param 'q'"}), 400
-    results = search_arxiv(query, max_results=int(request.args.get("n", 5)))
-    return jsonify({"results": results})
+    try:
+        return jsonify({"results": search_arxiv(query, max_results=int(request.args.get("n", 5)))})
+    except Exception as e:
+        return jsonify({"error": f"ArXiv search failed: {str(e)}"}), 502
 
 
 @app.route("/api/mcp/github", methods=["GET"])
@@ -115,113 +572,46 @@ def github():
     query = request.args.get("q", "")
     if not query:
         return jsonify({"error": "Missing query param 'q'"}), 400
-    results = search_github(query, max_results=int(request.args.get("n", 5)))
-    return jsonify({"results": results})
+    try:
+        return jsonify({"results": search_github(query, max_results=int(request.args.get("n", 5)))})
+    except Exception as e:
+        return jsonify({"error": f"GitHub search failed: {str(e)}"}), 502
 
 
 @app.route("/api/mcp/huggingface/datasets", methods=["GET"])
 def hf_datasets():
     query = request.args.get("q", "")
-    results = search_datasets(query, max_results=int(request.args.get("n", 5)))
-    return jsonify({"results": results})
+    try:
+        return jsonify({"results": search_datasets(query, max_results=int(request.args.get("n", 5)))})
+    except Exception as e:
+        return jsonify({"error": f"HuggingFace datasets search failed: {str(e)}"}), 502
 
 
 @app.route("/api/mcp/huggingface/models", methods=["GET"])
 def hf_models():
     query = request.args.get("q", "")
-    results = search_models(query, max_results=int(request.args.get("n", 5)))
-    return jsonify({"results": results})
+    try:
+        return jsonify({"results": search_models(query, max_results=int(request.args.get("n", 5)))})
+    except Exception as e:
+        return jsonify({"error": f"HuggingFace models search failed: {str(e)}"}), 502
 
 
-# ─── Architecture Generation ──────────────────────────────────────────────────
+# ─── Architecture (standalone endpoint kept for compatibility) ─────────────────
 
 @app.route("/api/architecture", methods=["POST"])
 def generate_architecture():
-    """Use Groq to generate architecture nodes/edges from paper or prompt."""
     data = request.json
     prompt = data.get("prompt", "")
     session_id = data.get("session_id", "default")
-
-    # Optionally include paper context
-    context = ""
-    vs = stores.get(session_id)
-    if vs and vs.is_ready():
-        candidates = vs.search(prompt or "architecture methodology system design", top_k=5)
-        context = "\n\n".join(c["text"] for c in candidates)
-
-    client = get_groq()
-    system_msg = """You are an architecture diagram generator. Given a research paper context or description,
-output a JSON object with this exact structure:
-{
-  "nodes": [
-    {"id": "1", "label": "Component Name", "type": "input|process|output|model|data|attention", "description": "brief description"}
-  ],
-  "edges": [
-    {"source": "1", "target": "2", "label": "optional edge label"}
-  ],
-  "title": "Architecture Name"
-}
-Types: input=blue, process=purple, output=green, model=orange, data=yellow, attention=red.
-Output ONLY the JSON, no markdown, no explanation."""
-
-    user_msg = f"Context:\n{context}\n\nDescribe the architecture of: {prompt or 'this research paper'}"
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        temperature=0.1,
-        max_tokens=1024,
-    )
-
-    raw = response.choices[0].message.content.strip()
-    # Strip possible markdown fences
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
-
+    store = stores.get(session_id) or context_stores.get(session_id)
     try:
-        arch = json.loads(raw)
-    except json.JSONDecodeError:
-        return jsonify({"error": "Failed to parse architecture JSON", "raw": raw}), 500
+        arch = _generate_architecture_internal(prompt, store)
+        return jsonify(arch)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    return jsonify(arch)
 
-
-# ─── Prototype Builder ─────────────────────────────────────────────────────────
-
-@app.route("/api/prototype", methods=["POST"])
-def generate_prototype():
-    """Generate React component prototype from description."""
-    data = request.json
-    description = data.get("description", "")
-    session_id = data.get("session_id", "default")
-
-    context = ""
-    vs = stores.get(session_id)
-    if vs and vs.is_ready():
-        candidates = vs.search(description, top_k=4)
-        context = "\n\n".join(c["text"] for c in candidates)
-
-    client = get_groq()
-    system_msg = """You are a React prototype generator. Generate a complete, self-contained React component.
-Output ONLY the JSX/JS code in a single code block. Use inline styles only (no imports for CSS).
-The component should be functional, realistic, and visually clean with a dark theme (#0f1117 background).
-Do not include import statements for React — assume it's available globally."""
-
-    user_msg = f"Paper context:\n{context}\n\nGenerate a prototype component for: {description}"
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-        temperature=0.3,
-        max_tokens=2048,
-    )
-
-    code = response.choices[0].message.content.strip()
-    return jsonify({"code": code})
-
+# ─── Error handlers ───────────────────────────────────────────────────────────
 
 @app.errorhandler(413)
 def too_large(e):

@@ -2,24 +2,26 @@ import React, { useState } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import PaperUpload from './components/PaperUpload'
 import ChatInterface from './components/ChatInterface'
-import MCPSearch from './components/MCPSearch'
 import ArchitectureVisualization from './components/ArchitectureVisualization'
-import PrototypeBuilder from './components/PrototypeBuilder'
+import { ToastProvider } from './components/Toast'
 import { clearSession } from './services/api'
+import { Mark, IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoClose } from './components/Icons'
 
 const SESSION_ID = uuidv4()
 
-const TABS = [
-  { key: 'chat', label: '💬 Chat' },
-  { key: 'mcp', label: '🔍 Search' },
-  { key: 'arch', label: '🏗️ Architecture' },
-  { key: 'proto', label: '⚡ Prototype' },
+const CAPS = [
+  { icon: IcoPaper,  label: 'Paper Q&A',      desc: 'Ask anything about your doc' },
+  { icon: IcoSearch, label: 'ArXiv Search',   desc: 'Find related research papers' },
+  { icon: IcoCode,   label: 'GitHub Code',    desc: 'Find implementations' },
+  { icon: IcoBox,    label: 'HuggingFace',    desc: 'Datasets & model search' },
+  { icon: IcoNodes,  label: 'Architecture',   desc: 'Auto-generate diagrams' },
+  { icon: IcoWrench, label: 'Implementation', desc: 'Code guidance from paper' },
 ]
 
 export default function App() {
-  const [tab, setTab] = useState('chat')
-  const [hasDoc, setHasDoc] = useState(false)
+  const [hasDoc, setHasDoc]   = useState(false)
   const [docInfo, setDocInfo] = useState(null)
+  const [archModal, setArchModal] = useState(null)
 
   function onIndexed(info) {
     setHasDoc(true)
@@ -33,74 +35,134 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: 'var(--bg)' }}>
+    <ToastProvider>
+      <div className="app-shell">
+        <header className="navbar">
+          <div className="nav-brand">
+            <div className="nav-mark"><Mark /></div>
+            <div>
+              <div className="nav-wordmark"><em>Research</em> RAG</div>
+              <div className="nav-sub">Library terminal</div>
+            </div>
+          </div>
 
-      {/* Sidebar */}
-      <div style={{
-        width: 260, background: 'var(--surface)', borderRight: '1px solid var(--border)',
-        display: 'flex', flexDirection: 'column', flexShrink: 0,
-      }}>
-        {/* Logo */}
-        <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
-            🧠 Research RAG
+          <div className="nav-center">
+            <div style={{
+              fontSize: 11,
+              color: 'var(--faint)',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+            }}>
+              Paper · ArXiv · GitHub · HuggingFace · Architecture
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-            Powered by Groq · llama-3.3-70b
+
+          <div className="nav-end">
+            <span className="nav-meta">llama-3.3-70b</span>
+            <span className="status-dot" title="Session live" />
           </div>
+        </header>
+
+        <div className="app-body">
+          <aside className="sidebar">
+            <div className="side-block">
+              <div className="side-label">Research paper</div>
+              <PaperUpload sessionId={SESSION_ID} onIndexed={onIndexed} />
+            </div>
+
+            {hasDoc && docInfo && (
+              <div className="doc-card animate-fade">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--moss)' }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--moss)' }}>Indexed</span>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <span className="tag tag-green">{docInfo.num_pages} pages</span>
+                  <span className="tag tag-accent">{docInfo.num_chunks} chunks</span>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  <span className="tag" style={{
+                    background: docInfo.rag_mode === 'vectorless' ? 'rgba(197,123,90,0.15)' : 'rgba(138,163,122,0.15)',
+                    color: docInfo.rag_mode === 'vectorless' ? '#c57b5a' : '#8aa37a',
+                    border: `1px solid ${docInfo.rag_mode === 'vectorless' ? 'rgba(197,123,90,0.3)' : 'rgba(138,163,122,0.3)'}`,
+                  }}>
+                    {docInfo.rag_mode === 'vectorless' ? '⚡ Vectorless RAG' : '⬡ Vector RAG'}
+                  </span>
+                  {docInfo.has_visuals && (
+                    <span className="tag" style={{
+                      background: 'rgba(196,163,106,0.12)',
+                      color: '#c4a36a',
+                      border: '1px solid rgba(196,163,106,0.25)',
+                    }}>
+                      {docInfo.visual_stats?.total_images || 0} images
+                    </span>
+                  )}
+                </div>
+                <button
+                  className="btn btn-danger"
+                  style={{ width: '100%', height: 28, fontSize: 11 }}
+                  onClick={handleClear}
+                >
+                  Clear session
+                </button>
+              </div>
+            )}
+
+            <div className="side-block" style={{ flex: 1 }}>
+              <div className="side-label">Capabilities</div>
+              {CAPS.map(cap => (
+                <div key={cap.label} className="cap-row">
+                  <div className="cap-ico"><cap.icon size={13} /></div>
+                  <div>
+                    <strong>{cap.label}</strong>
+                    <span>{cap.desc}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="side-foot">
+              <span className="status-dot" />
+              {SESSION_ID.slice(0, 12)}…
+            </div>
+          </aside>
+
+          <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+            <ChatInterface
+              sessionId={SESSION_ID}
+              hasDoc={hasDoc}
+              onOpenArch={setArchModal}
+            />
+          </main>
         </div>
 
-        {/* Upload */}
-        <PaperUpload sessionId={SESSION_ID} onIndexed={onIndexed} />
-
-        {/* Doc status */}
-        {hasDoc && docInfo && (
-          <div style={{ padding: '0 16px 12px' }}>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>
-              📄 {docInfo.num_pages}p · {docInfo.num_chunks} chunks indexed
+        {archModal && (
+          <div className="modal-scrim">
+            <div className="modal-bar">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="cap-ico"><IcoNodes size={13} /></div>
+                <div>
+                  <div style={{ fontFamily: 'var(--serif)', fontSize: 15, color: 'var(--paper)' }}>
+                    {archModal.title || 'Architecture diagram'}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--faint)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    {archModal.nodes?.length} nodes · {archModal.edges?.length} edges
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setArchModal(null)} className="btn btn-ghost">
+                <IcoClose size={12} /> Close
+              </button>
             </div>
-            <button className="btn btn-danger" style={{ width: '100%', justifyContent: 'center', fontSize: 11 }} onClick={handleClear}>
-              Clear Session
-            </button>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <ArchitectureVisualization
+                sessionId={SESSION_ID}
+                preloadedData={archModal}
+              />
+            </div>
           </div>
         )}
-
-        {/* Nav */}
-        <div style={{ padding: '8px', flex: 1 }}>
-          {TABS.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)}
-              style={{
-                width: '100%', textAlign: 'left', padding: '9px 12px',
-                borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13,
-                background: tab === t.key ? 'var(--surface2)' : 'transparent',
-                color: tab === t.key ? 'var(--text)' : 'var(--muted)',
-                fontWeight: tab === t.key ? 600 : 400,
-                borderLeft: tab === t.key ? '2px solid var(--accent)' : '2px solid transparent',
-                marginBottom: 2,
-                transition: 'all 0.15s',
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Session info */}
-        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, color: 'var(--muted)' }}>
-            Session: {SESSION_ID.slice(0, 8)}...
-          </div>
-        </div>
       </div>
-
-      {/* Main panel */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {tab === 'chat' && <ChatInterface sessionId={SESSION_ID} hasDoc={hasDoc} />}
-        {tab === 'mcp' && <MCPSearch />}
-        {tab === 'arch' && <ArchitectureVisualization sessionId={SESSION_ID} />}
-        {tab === 'proto' && <PrototypeBuilder sessionId={SESSION_ID} />}
-      </div>
-
-    </div>
+    </ToastProvider>
   )
 }

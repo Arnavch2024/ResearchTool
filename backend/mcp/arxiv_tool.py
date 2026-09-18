@@ -14,7 +14,10 @@ def search_arxiv(query: str, max_results: int = 5) -> list[dict]:
         "sortBy": "relevance",
         "sortOrder": "descending",
     }
-    resp = requests.get(ARXIV_API, params=params, timeout=10)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    resp = requests.get(ARXIV_API, params=params, headers=headers, timeout=15)
     resp.raise_for_status()
 
     root = ET.fromstring(resp.text)

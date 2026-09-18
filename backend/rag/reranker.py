@@ -1,7 +1,9 @@
+import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
 _cross_encoder = None
+
 
 def get_cross_encoder():
     global _cross_encoder
@@ -24,14 +26,14 @@ def rerank(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
     bm25 = BM25Okapi(tokenized_corpus)
     bm25_scores = bm25.get_scores(query.lower().split())
 
-    # Normalize BM25 scores to [0,1]
-    bm25_max = max(bm25_scores) if max(bm25_scores) > 0 else 1
-    bm25_normalized = [s / bm25_max for s in bm25_scores]
+    # Normalize BM25 scores to [0,1] using numpy for correctness
+    bm25_max = float(np.max(bm25_scores))
+    bm25_normalized = bm25_scores / (bm25_max + 1e-10)
 
     # Fuse: 0.6 * vector_score + 0.4 * bm25_score
     fused = []
     for i, c in enumerate(candidates):
-        fused_score = 0.6 * c.get("score", 0) + 0.4 * bm25_normalized[i]
+        fused_score = 0.6 * c.get("score", 0) + 0.4 * float(bm25_normalized[i])
         fused.append({**c, "fused_score": fused_score})
 
     # Take top 10 for cross-encoder (expensive step)
