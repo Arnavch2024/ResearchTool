@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import {
+  searchBenchmarks,
   searchScholar,
   searchArxiv,
   searchGitHub,
@@ -7,6 +8,7 @@ import {
   searchHFModels,
 } from '../services/api'
 import {
+  IcoTrophy,
   IcoScholar,
   IcoPaper,
   IcoCode,
@@ -16,6 +18,14 @@ import {
 } from './Icons'
 
 const SOURCES = [
+  {
+    key: 'benchmarks',
+    label: 'SOTA Benchmarks',
+    icon: IcoTrophy,
+    color: '#f59e0b',
+    fn: searchBenchmarks,
+    placeholder: 'Search SOTA leaderboards, benchmarks & trending papers, e.g. "reasoning"',
+  },
   {
     key: 'scholar',
     label: 'Semantic Scholar',
@@ -60,7 +70,7 @@ const SOURCES = [
 
 export default function MCPSearch() {
   const [query, setQuery]   = useState('')
-  const [active, setActive] = useState('scholar')
+  const [active, setActive] = useState('benchmarks')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState('')
@@ -68,7 +78,6 @@ export default function MCPSearch() {
   const src = SOURCES.find(s => s.key === active) || SOURCES[0]
 
   async function search() {
-    if (!query.trim()) return
     setLoading(true)
     setResults([])
     setError('')
@@ -100,7 +109,7 @@ export default function MCPSearch() {
           </div>
           <div>
             <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--paper)' }}>Academic &amp; Ecosystem Explorer</div>
-            <div style={{ fontSize: 10, color: 'var(--muted)' }}>Live MCP multi-source intelligence</div>
+            <div style={{ fontSize: 10, color: 'var(--muted)' }}>Live MCP multi-source research intelligence</div>
           </div>
         </div>
 
@@ -144,7 +153,7 @@ export default function MCPSearch() {
               color: 'var(--paper)', fontSize: 12, outline: 'none',
             }}
           />
-          <button className="btn btn-primary" onClick={search} disabled={loading || !query.trim()} style={{ flexShrink: 0 }}>
+          <button className="btn btn-primary" onClick={search} disabled={loading} style={{ flexShrink: 0 }}>
             {loading ? (
               <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', animation: 'spin 0.7s linear infinite' }} />
             ) : (
@@ -233,21 +242,38 @@ function ResultCard({ result, source, color, index }) {
         >
           {title}
         </a>
-        {url && (
-          <a href={url} target="_blank" rel="noreferrer"
-            style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              padding: '3px 9px', borderRadius: 4, flexShrink: 0,
-              background: 'var(--brass-dim)',
-              border: '1px solid var(--brass-line)',
-              color: 'var(--brass-2)', fontSize: 10, fontWeight: 600,
-              textDecoration: 'none', transition: 'all 0.15s',
-            }}
-          >
-            <span>Open</span>
-            <IcoExt size={10} />
-          </a>
-        )}
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          {result.project_page && (
+            <a href={result.project_page} target="_blank" rel="noreferrer"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '3px 9px', borderRadius: 4,
+                background: 'var(--moss-dim)',
+                border: '1px solid rgba(138,163,122,0.3)',
+                color: 'var(--moss)', fontSize: 10, fontWeight: 600,
+                textDecoration: 'none', transition: 'all 0.15s',
+              }}
+            >
+              <IcoCode size={10} />
+              <span>Code</span>
+            </a>
+          )}
+          {url && (
+            <a href={url} target="_blank" rel="noreferrer"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '3px 9px', borderRadius: 4,
+                background: 'var(--brass-dim)',
+                border: '1px solid var(--brass-line)',
+                color: 'var(--brass-2)', fontSize: 10, fontWeight: 600,
+                textDecoration: 'none', transition: 'all 0.15s',
+              }}
+            >
+              <span>Open</span>
+              <IcoExt size={10} />
+            </a>
+          )}
+        </div>
       </div>
 
       {fullDesc && (
@@ -265,10 +291,18 @@ function ResultCard({ result, source, color, index }) {
       )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        {result.upvotes != null && (
+          <span className="tag" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)', fontWeight: 600 }}>
+            👍 {result.upvotes.toLocaleString()} upvotes
+          </span>
+        )}
         {result.citations != null && (
           <span className="tag" style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.25)', fontWeight: 600 }}>
             {result.citations.toLocaleString()} citations
           </span>
+        )}
+        {result.org && (
+          <span className="tag tag-accent">{result.org}</span>
         )}
         {result.venue && (
           <span className="tag" style={{ background: 'var(--surface2)', color: 'var(--paper-2)' }}>

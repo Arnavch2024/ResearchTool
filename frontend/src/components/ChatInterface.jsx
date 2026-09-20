@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { sendChat } from '../services/api'
 import { useChatHistory } from '../hooks/useChatHistory'
-import { IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoSend, IcoUser, IcoBot, IcoExpand, IcoExt, IcoScholar } from './Icons'
+import { IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoSend, IcoUser, IcoBot, IcoExpand, IcoExt, IcoScholar, IcoTrophy } from './Icons'
 
 const STARTERS_WITH_DOC = [
   { icon: IcoPaper,  text: 'What is the main contribution of this paper?' },
@@ -13,15 +13,16 @@ const STARTERS_WITH_DOC = [
 ]
 
 const STARTERS_NO_DOC = [
+  { icon: IcoTrophy, text: 'What are the top trending SOTA AI reasoning papers?' },
   { icon: IcoSearch, text: 'Search recent papers on DeepSeek and reasoning models' },
   { icon: IcoNodes,  text: 'Show me the Transformer self-attention architecture' },
   { icon: IcoCode,   text: 'Find open-source implementations of FlashAttention' },
   { icon: IcoPaper,  text: 'Explain how Direct Preference Optimization (DPO) works' },
-  { icon: IcoBox,    text: 'What are the top benchmarks for LLM code generation?' },
   { icon: IcoWrench, text: 'How do I fine-tune an LLM with LoRA & PEFT?' },
 ]
 
 const TOOL_META = {
+  benchmarks:       { icon: IcoTrophy,  label: 'SOTA Benchmarks',  color: '#f59e0b' },
   semantic_scholar: { icon: IcoScholar, label: 'Semantic Scholar', color: 'var(--brass)' },
   scholar:          { icon: IcoScholar, label: 'Semantic Scholar', color: 'var(--brass)' },
   arxiv:            { icon: IcoSearch,  label: 'ArXiv papers',     color: 'var(--slate)' },
@@ -46,6 +47,7 @@ function TypingIndicator({ query }) {
   const steps = useMemo(() => {
     const q = (query || '').toLowerCase()
     const list = ['Routing query']
+    if (/benchmark|leaderboard|sota|trending/.test(q)) list.push('Checking SOTA Benchmarks')
     if (/scholar|semantic|citation|cited|impact|peer|journal|conference/.test(q)) list.push('Searching Scholar')
     if (/paper|arxiv|research|publication|survey|literature/.test(q)) list.push('Searching ArXiv')
     if (/github|code|implementation|repo/.test(q)) list.push('Searching GitHub')
@@ -166,10 +168,19 @@ function MCPResultCards({ toolCalls }) {
                           <span key={j} style={{ fontSize: 10, color: 'var(--muted)' }}>{a}</span>
                         ))}
                         {r.year && <span style={{ fontSize: 10, color: 'var(--muted)' }}>· {r.year}</span>}
+                        {r.published && <span style={{ fontSize: 10, color: 'var(--muted)' }}>· {r.published}</span>}
+                        {r.upvotes != null && (
+                          <span className="tag" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)', fontWeight: 600 }}>
+                            👍 {r.upvotes.toLocaleString()} upvotes
+                          </span>
+                        )}
                         {r.citations != null && (
                           <span className="tag tag-accent" style={{ color: '#fbbf24', background: 'rgba(251,191,36,0.1)' }}>
                             {r.citations.toLocaleString()} citations
                           </span>
+                        )}
+                        {r.org && (
+                          <span className="tag tag-accent">{r.org}</span>
                         )}
                         {r.venue && (
                           <span style={{ fontSize: 10, color: 'var(--paper-2)' }}>· {r.venue}</span>

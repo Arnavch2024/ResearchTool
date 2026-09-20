@@ -25,6 +25,7 @@
 
 ### 3. 🌐 Ecosystem Search (Model Context Protocol - MCP)
 - Agentic intent classifier routes queries across live research networks:
+  - **🏆 SOTA Benchmarks & Leaderboards**: Track trending research, daily top papers, evaluation rankings, upvote popularity, and verified GitHub implementation codebases.
   - **🧠 Semantic Scholar & OpenAlex**: Search 200M+ peer-reviewed papers with citation counts, influential citations, conference/journal venues, and auto-generated TL;DR summaries.
   - **📄 ArXiv**: Retrieve recent preprints, authors, abstracts, and direct PDF links.
   - **🐙 GitHub**: Find open-source codebases, libraries, and model implementations.
