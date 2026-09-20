@@ -110,14 +110,16 @@ def register_security_headers(app):
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=()"
         )
-        # Content Security Policy
+        # Content Security Policy (allows safe dynamic preview execution, font/script CDNs, and API connections)
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' data: blob:; "
-            "connect-src 'self';"
+            "default-src 'self' http://localhost:* ws://localhost:*; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdnjs.cloudflare.com blob:; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+            "font-src 'self' https://fonts.gstatic.com data:; "
+            "img-src 'self' data: blob: https:; "
+            "connect-src 'self' http://localhost:* ws://localhost:* https://api.groq.com; "
+            "frame-src 'self' data: blob:; "
+            "child-src 'self' data: blob:;"
         )
         # CORS allowed headers
         response.headers["Access-Control-Allow-Headers"] = (

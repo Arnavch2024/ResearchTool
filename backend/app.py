@@ -367,7 +367,7 @@ The JSON must conform exactly to this schema:
 7. If context is insufficient, generate a plausible general architecture for the described system."""
 
 
-def _generate_architecture_internal(prompt: str, store) -> dict:
+def _generate_architecture_internal(prompt: str, store, api_key: str = None) -> dict:
     """Generate architecture JSON, optionally grounded in uploaded paper."""
     context = ""
     if store and store.is_ready():
@@ -379,7 +379,7 @@ def _generate_architecture_internal(prompt: str, store) -> dict:
             candidates = store.search(arch_query, top_k=5)
         context = "\n\n".join(c["text"] for c in candidates)
 
-    client = get_groq()
+    client = get_groq(api_key=api_key)
     resp = client.chat.completions.create(
         model=LLM_MODEL,
         messages=[
@@ -404,16 +404,16 @@ def _generate_architecture_internal(prompt: str, store) -> dict:
         return {"title": prompt or "Architecture", "nodes": [], "edges": [], "error": "Parse failed"}
 
 
-def _synthesize_mcp_only(query: str, mcp_context: str, history: list) -> tuple[str, dict]:
+def _synthesize_mcp_only(query: str, mcp_context: str, history: list, api_key: str = None) -> tuple[str, dict]:
     """Synthesize an answer from MCP results only (no PDF loaded)."""
-    client = get_groq()
+    client = get_groq(api_key=api_key)
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a helpful research assistant. "
-                "Synthesize the external search results below to answer the user's question. "
-                "Be concise, reference sources by name, and highlight the most relevant findings."
+                "You are an expert AI research assistant. "
+                "Synthesize the external search results below (ArXiv, GitHub, HuggingFace) to answer the user's question. "
+                "Be structured and concise, reference sources by name/authors/stars, and highlight practical implementations."
             ),
         },
         *[m for m in (history or [])[-4:] if m.get("role") != "system"],
@@ -426,12 +426,44 @@ def _synthesize_mcp_only(query: str, mcp_context: str, history: list) -> tuple[s
         model=LLM_MODEL,
         messages=messages,
         temperature=0.2,
-        max_tokens=768,
+        max_tokens=1024,
     )
     return resp.choices[0].message.content, {
-        "prompt_tokens": resp.usage.prompt_tokens,
-        "completion_tokens": resp.usage.completion_tokens,
+        "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
+        "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
     }
+
+
+def _answer_general_query(query: str, history: list, api_key: str = None) -> tuple[str, dict]:
+    """Answer general academic, machine learning, or CS research questions without an uploaded document."""
+    client = get_groq(api_key=api_key)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an elite academic AI research assistant and scholar. "
+                "Help researchers, engineers, and students understand machine learning architectures, "
+                "algorithms, training paradigms, mathematical formulas, and scientific concepts. "
+                "Provide rigorous, insightful, and clearly structured answers with markdown formatting, "
+                "equations, or code examples where appropriate. "
+                "Note: The user can also upload specific research paper PDFs in the sidebar at any time to ground queries directly in their paper."
+            ),
+        },
+        *[m for m in (history or [])[-6:] if m.get("role") != "system"],
+        {"role": "user", "content": query},
+    ]
+    resp = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=messages,
+        temperature=0.3,
+        max_tokens=1200,
+    )
+    ans = resp.choices[0].message.content or ""
+    usage = {
+        "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
+        "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
+    }
+    return ans, usage
 
 
 # ─── RAG Endpoints ────────────────────────────────────────────────────────────
@@ -644,9 +676,10 @@ def chat():
             "usage": result["usage"],
         })
 
-    # ── No doc loaded — synthesise from MCP only ───────────────────────────
+    # ── No doc loaded — synthesise from MCP if external tools were executed ──
+    req_key = get_request_groq_key()
     if mcp_context:
-        answer, usage = _synthesize_mcp_only(query, mcp_context, history)
+        answer, usage = _synthesize_mcp_only(query, mcp_context, history, api_key=req_key)
         history.append({"role": "user", "content": query})
         history.append({"role": "assistant", "content": answer})
         chat_histories[session_id] = history
@@ -662,19 +695,21 @@ def chat():
             "usage": usage,
         })
 
-    # ── Fallback: no doc, no MCP — ask to upload ──────────────────────────
-    clarify_msg = "Please upload a PDF research paper first, or try asking me to search for papers, code, or datasets."
-    _persist_chat_message(g.user_id, session_id, "user", query, intent="clarify")
-    _persist_chat_message(g.user_id, session_id, "assistant", clarify_msg, intent="clarify")
+    # ── No doc loaded & no MCP — answer directly as academic research scholar ──
+    answer, usage = _answer_general_query(query, history, api_key=req_key)
+    history.append({"role": "user", "content": query})
+    history.append({"role": "assistant", "content": answer})
+    chat_histories[session_id] = history
+    _persist_chat_message(g.user_id, session_id, "user", query, intent="general")
+    _persist_chat_message(g.user_id, session_id, "assistant", answer, intent="general")
     return jsonify({
-        "intent": "clarify",
-        "clarify_question": clarify_msg,
-        "answer": None,
+        "intent": "general",
+        "answer": answer,
         "sources": [],
         "tool_calls": [],
         "arch_data": None,
         "rag_mode": None,
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        "usage": usage,
     })
 
 

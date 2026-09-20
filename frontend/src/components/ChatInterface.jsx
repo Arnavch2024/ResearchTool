@@ -3,13 +3,22 @@ import { sendChat } from '../services/api'
 import { useChatHistory } from '../hooks/useChatHistory'
 import { IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoSend, IcoUser, IcoBot, IcoExpand, IcoExt } from './Icons'
 
-const STARTERS = [
+const STARTERS_WITH_DOC = [
   { icon: IcoPaper,  text: 'What is the main contribution of this paper?' },
-  { icon: IcoSearch, text: 'Find related papers on ArXiv for this topic' },
   { icon: IcoNodes,  text: 'Show me the system architecture diagram' },
+  { icon: IcoSearch, text: 'Find related papers on ArXiv for this topic' },
   { icon: IcoCode,   text: 'Are there GitHub implementations of this method?' },
   { icon: IcoBox,    text: 'What datasets were used for evaluation?' },
   { icon: IcoWrench, text: 'How would I implement this from scratch?' },
+]
+
+const STARTERS_NO_DOC = [
+  { icon: IcoSearch, text: 'Search recent papers on DeepSeek and reasoning models' },
+  { icon: IcoNodes,  text: 'Show me the Transformer self-attention architecture' },
+  { icon: IcoCode,   text: 'Find open-source implementations of FlashAttention' },
+  { icon: IcoPaper,  text: 'Explain how Direct Preference Optimization (DPO) works' },
+  { icon: IcoBox,    text: 'What are the top benchmarks for LLM code generation?' },
+  { icon: IcoWrench, text: 'How do I fine-tune an LLM with LoRA & PEFT?' },
 ]
 
 const TOOL_META = {
@@ -475,27 +484,25 @@ export default function ChatInterface({ sessionId, hasDoc, onOpenArch }) {
                 <IcoPaper size={20} stroke={1.6} />
               </div>
               <div style={{ fontFamily: 'var(--serif)', fontSize: 22, fontWeight: 500, color: 'var(--paper)', marginBottom: 8, letterSpacing: '-0.02em' }}>
-                {hasDoc ? 'Ready to read' : 'Open a paper to begin'}
+                {hasDoc ? 'Ready to read' : 'AI Research Workspace'}
               </div>
-              <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 380, lineHeight: 1.6 }}>
+              <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 440, lineHeight: 1.6 }}>
                 {hasDoc
                   ? 'Ask about the document, search related work, pull implementations, or draw the architecture.'
-                  : 'Drop a PDF in the sidebar, or search ArXiv, GitHub, and HuggingFace without one.'}
+                  : 'Ask any research or machine learning question, search ArXiv / GitHub / HuggingFace, or drop a PDF in the sidebar to ground answers.'}
               </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: 540 }}>
               <div className="side-label" style={{ textAlign: 'center', marginBottom: 2 }}>Try asking</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {STARTERS.map((s, i) => {
+                {(hasDoc ? STARTERS_WITH_DOC : STARTERS_NO_DOC).map((s, i) => {
                   const IconCmp = s.icon
-                  const needsDoc = s.text.startsWith('What is the main contribution') || s.text.startsWith('How would I implement') || s.text.startsWith('Show me the system')
                   return (
                     <button
                       key={i}
                       className="starter"
                       onClick={() => submit(s.text)}
-                      disabled={!hasDoc && needsDoc}
                     >
                       <span style={{ color: 'var(--brass)', marginTop: 1 }}><IconCmp size={13} /></span>
                       <span>{s.text}</span>
@@ -531,7 +538,7 @@ export default function ChatInterface({ sessionId, hasDoc, onOpenArch }) {
             placeholder={
               hasDoc
                 ? 'Ask the paper, search code, or request a diagram…'
-                : 'Search ArXiv, GitHub, HuggingFace — or upload a PDF'
+                : 'Ask any research question, search ArXiv/GitHub, or upload a paper…'
             }
             disabled={loading}
             rows={1}
