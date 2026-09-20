@@ -57,12 +57,23 @@ start_session_cleanup(stores, context_stores, rag_modes, chat_histories)
 _groq_client = None
 
 
-def get_groq():
-    global _groq_client
-    if _groq_client is None:
-        from groq import Groq
-        _groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
-    return _groq_client
+def get_request_groq_key() -> str | None:
+    """Extract Groq API key from request headers if present, else fallback to env."""
+    from flask import has_request_context
+    if has_request_context():
+        custom_key = request.headers.get("X-Groq-Api-Key") or request.headers.get("X-Api-Key")
+        if custom_key and custom_key.strip():
+            return custom_key.strip()
+    return os.environ.get("GROQ_API_KEY")
+
+
+def get_groq(api_key: str | None = None):
+    """Return a Groq client, prioritizing user-provided per-request API key."""
+    from groq import Groq
+    key = (api_key or "").strip() or get_request_groq_key()
+    if not key:
+        raise ValueError("No Groq API key provided. Please configure your Groq API key in Settings.")
+    return Groq(api_key=key)
 
 
 def strip_code_fences(text: str) -> str:
@@ -601,12 +612,13 @@ def chat():
 
     # ── Step 3 & 4: RAG (always run if doc loaded) ─────────────────────────
     if has_doc:
+        req_key = get_request_groq_key()
         if mode == "vectorless" and cs is not None:
             # Vectorless RAG — page-level BM25
-            result = answer_query_vectorless(query, cs, history, mcp_context=mcp_context)
+            result = answer_query_vectorless(query, cs, history, mcp_context=mcp_context, api_key=req_key)
         else:
             # Vector RAG — chunk-level FAISS + reranking
-            result = answer_query(query, vs, history, mcp_context=mcp_context)
+            result = answer_query(query, vs, history, mcp_context=mcp_context, api_key=req_key)
 
         history.append({"role": "user", "content": query})
         history.append({"role": "assistant", "content": result["answer"]})
@@ -823,6 +835,34 @@ def too_large(e):
 def internal_error(e):
     # Never leak stack traces in production
     return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route("/api/test-key", methods=["POST"])
+@limiter.limit("20 per minute")
+def test_key():
+    """Verify user's provided Groq API key with a fast 1-token test call."""
+    api_key = (
+        request.headers.get("X-Groq-Api-Key")
+        or request.headers.get("X-Api-Key")
+        or (request.json.get("api_key") if request.is_json else None)
+    )
+    if not api_key:
+        return jsonify({"error": "No API key provided in X-Groq-Api-Key header"}), 400
+    try:
+        from groq import Groq
+        client = Groq(api_key=api_key.strip())
+        resp = client.chat.completions.create(
+            model=FAST_MODEL,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+        )
+        return jsonify({
+            "valid": True,
+            "model": FAST_MODEL,
+            "status": "connected",
+        })
+    except Exception as e:
+        return jsonify({"valid": False, "error": str(e)}), 400
 
 
 @app.route("/health")

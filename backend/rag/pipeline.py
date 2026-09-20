@@ -14,10 +14,16 @@ LLM_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 FAST_MODEL = os.environ.get("GROQ_FAST_MODEL", "openai/gpt-oss-20b")
 
 
-def get_groq() -> Groq:
+def get_groq(api_key: Optional[str] = None) -> Groq:
+    """Return a Groq client, prioritizing user-provided per-request API key."""
+    if api_key and api_key.strip():
+        return Groq(api_key=api_key.strip())
     global _groq_client
     if _groq_client is None:
-        _groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        default_key = os.environ.get("GROQ_API_KEY")
+        if not default_key:
+            raise ValueError("No Groq API key provided. Please configure your Groq API key in Settings.")
+        _groq_client = Groq(api_key=default_key)
     return _groq_client
 
 
@@ -134,6 +140,7 @@ def answer_query(
     vector_store: VectorStore,
     history: list = None,
     mcp_context: str = "",
+    api_key: Optional[str] = None,
 ) -> dict:
     """
     Full RAG pipeline: retrieve → rerank → generate.
@@ -167,7 +174,7 @@ def answer_query(
     messages.append(user_msg)
 
     # Generate
-    client = get_groq()
+    client = get_groq(api_key=api_key)
     response = client.chat.completions.create(
         model=LLM_MODEL,
         messages=messages,
@@ -286,17 +293,19 @@ def build_prompt_vectorless(
 
 def answer_query_vectorless(
     query: str,
-    context_store: "ContextStore",
+    context_store: ContextStore,
     history: list = None,
     mcp_context: str = "",
+    top_k_pages: int = 3,
+    api_key: Optional[str] = None,
 ) -> dict:
     """
-    Vectorless RAG pipeline: BM25 page-select → generate.
-    No embedding or reranking — pages are selected by ContextStore.search().
-    Returns the same shape as answer_query() for seamless integration.
+    Vectorless RAG pipeline: retrieve pages via BM25 → generate.
+    Preserves page structure so visual elements (charts, tables, diagrams)
+    retained in the text surrounding them are available to the LLM.
     """
-    # Retrieve relevant pages (BM25 page-level)
-    context_pages = context_store.search(query, max_chars=120_000)
+    # Retrieve top pages via lexical BM25
+    context_pages = context_store.search(query, top_k=top_k_pages)
 
     # Guard: empty or corrupted PDF
     if not context_pages:
@@ -320,7 +329,7 @@ def answer_query_vectorless(
     messages.append(user_msg)
 
     # Generate
-    client = get_groq()
+    client = get_groq(api_key=api_key)
     response = client.chat.completions.create(
         model=LLM_MODEL,
         messages=messages,

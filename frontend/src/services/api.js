@@ -1,3 +1,5 @@
+import { getActiveApiKey } from './keyStore'
+
 const BASE = '/api'
 
 export function getToken() {
@@ -14,7 +16,15 @@ export function setToken(token) {
 
 export function getAuthHeaders() {
   const token = getToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  const apiKey = getActiveApiKey()
+  const headers = {}
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  if (apiKey) {
+    headers['X-Groq-Api-Key'] = apiKey
+  }
+  return headers
 }
 
 export async function apiRegister(name, email, password) {
@@ -168,4 +178,20 @@ export async function generateArchitecture(prompt, sessionId) {
     throw new Error(err.error || 'Failed to generate architecture diagram')
   }
   return res.json()
+}
+
+export async function testGroqApiKey(apiKey) {
+  const res = await fetch(`${BASE}/test-key`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Groq-Api-Key': apiKey,
+      ...getAuthHeaders(),
+    },
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error || 'Invalid API key or network error')
+  }
+  return data
 }

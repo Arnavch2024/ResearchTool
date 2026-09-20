@@ -6,6 +6,7 @@ import ArchitectureVisualization from './components/ArchitectureVisualization'
 import MCPSearch from './components/MCPSearch'
 import PrototypeBuilder from './components/PrototypeBuilder'
 import LandingPage from './components/LandingPage'
+import KeySettingsModal from './components/KeySettingsModal'
 import { ToastProvider } from './components/Toast'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { clearSession } from './services/api'
@@ -30,11 +31,12 @@ const SIDEBAR_CAPS = [
 ]
 
 function Workspace() {
-  const { user, logout } = useAuth()
+  const { user, logout, hasApiKey } = useAuth()
   const [activeTab, setActiveTab] = useState('chat')
   const [hasDoc, setHasDoc]       = useState(false)
   const [docInfo, setDocInfo]     = useState(null)
   const [archData, setArchData]   = useState(null)
+  const [showKeyModal, setShowKeyModal] = useState(false)
 
   function onIndexed(info) {
     setHasDoc(true)
@@ -92,6 +94,17 @@ function Workspace() {
         </div>
 
         <div className="nav-end">
+          {/* BYOK API Key Status Button */}
+          <button
+            className={`nav-key-badge ${hasApiKey ? 'is-set' : 'is-missing'}`}
+            onClick={() => setShowKeyModal(true)}
+            title={hasApiKey ? 'Groq API Key Active in IndexedDB (Click to manage)' : 'Click to configure your Groq API Key'}
+          >
+            <span className="key-badge-icon">🔑</span>
+            <span>{hasApiKey ? 'Groq Key: Set' : 'Set API Key'}</span>
+            <span className={`key-status-dot ${hasApiKey ? 'dot-active' : 'dot-warn'}`} />
+          </button>
+
           <PrivacyBadge />
           
           {/* User Profile Pill */}
@@ -107,6 +120,12 @@ function Workspace() {
           <span className="status-dot" title="Session live" />
         </div>
       </header>
+
+      {/* API Key Modal */}
+      <KeySettingsModal
+        isOpen={showKeyModal}
+        onClose={() => setShowKeyModal(false)}
+      />
 
       <div className="app-body">
         <aside className="sidebar">
