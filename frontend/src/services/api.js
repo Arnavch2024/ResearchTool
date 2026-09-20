@@ -120,6 +120,13 @@ export async function getSessions() {
   return res.json()
 }
 
+export async function searchScholar(query, n = 6) {
+  const res = await fetch(`${BASE}/mcp/scholar?q=${encodeURIComponent(query)}&n=${n}`)
+  if (!res.ok) throw new Error((await res.json()).error)
+  const data = await res.json()
+  return data.results
+}
+
 export async function searchArxiv(query, n = 5) {
   const res = await fetch(`${BASE}/mcp/arxiv?q=${encodeURIComponent(query)}&n=${n}`)
   if (!res.ok) throw new Error((await res.json()).error)

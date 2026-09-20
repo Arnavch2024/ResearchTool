@@ -1,49 +1,71 @@
 import React, { useState } from 'react'
-import { searchArxiv, searchGitHub, searchHFDatasets, searchHFModels } from '../services/api'
+import {
+  searchScholar,
+  searchArxiv,
+  searchGitHub,
+  searchHFDatasets,
+  searchHFModels,
+} from '../services/api'
+import {
+  IcoScholar,
+  IcoPaper,
+  IcoCode,
+  IcoBox,
+  IcoSearch,
+  IcoExt,
+} from './Icons'
 
 const SOURCES = [
   {
+    key: 'scholar',
+    label: 'Semantic Scholar',
+    icon: IcoScholar,
+    color: 'var(--brass)',
+    fn: searchScholar,
+    placeholder: 'Search 200M+ papers & citations, e.g. "DeepSeek R1 reasoning"',
+  },
+  {
     key: 'arxiv',
     label: 'ArXiv',
-    emoji: '📄',
-    color: '#ef4444',
+    icon: IcoPaper,
+    color: 'var(--slate)',
     fn: searchArxiv,
-    placeholder: 'Search papers, e.g. "attention is all you need"',
+    placeholder: 'Search preprints, e.g. "attention is all you need"',
   },
   {
     key: 'github',
     label: 'GitHub',
-    emoji: '🐙',
-    color: '#10b981',
+    icon: IcoCode,
+    color: 'var(--brass-2)',
     fn: searchGitHub,
-    placeholder: 'Search repos, e.g. "transformer pytorch"',
+    placeholder: 'Search code repositories, e.g. "flash attention pytorch"',
   },
   {
     key: 'hf_data',
     label: 'HF Datasets',
-    emoji: '📦',
-    color: '#f59e0b',
+    icon: IcoBox,
+    color: 'var(--moss)',
     fn: searchHFDatasets,
-    placeholder: 'Search datasets, e.g. "squad question answering"',
+    placeholder: 'Search datasets, e.g. "gsm8k reasoning"',
   },
   {
     key: 'hf_model',
     label: 'HF Models',
-    emoji: '🤗',
-    color: '#a855f7',
+    icon: IcoBox,
+    color: '#a78bfa',
     fn: searchHFModels,
-    placeholder: 'Search models, e.g. "bert text classification"',
+    placeholder: 'Search model checkpoints, e.g. "llama-3-8b-instruct"',
   },
 ]
 
 export default function MCPSearch() {
   const [query, setQuery]   = useState('')
-  const [active, setActive] = useState('arxiv')
+  const [active, setActive] = useState('scholar')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState('')
 
-  const src = SOURCES.find(s => s.key === active)
+  const src = SOURCES.find(s => s.key === active) || SOURCES[0]
 
   async function search() {
     if (!query.trim()) return
@@ -69,37 +91,44 @@ export default function MCPSearch() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <div style={{
-            width: 28, height: 28, borderRadius: 8,
-            background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.3)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
-          }}>🔍</div>
+            width: 28, height: 28, borderRadius: 6,
+            background: 'var(--brass-dim)', border: '1px solid var(--brass-line)',
+            color: 'var(--brass)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <IcoSearch size={14} />
+          </div>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>Ecosystem Explorer</div>
-            <div style={{ fontSize: 10, color: 'var(--muted)' }}>MCP-powered external search</div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--paper)' }}>Academic &amp; Ecosystem Explorer</div>
+            <div style={{ fontSize: 10, color: 'var(--muted)' }}>Live MCP multi-source intelligence</div>
           </div>
         </div>
 
         {/* Source tabs */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-          {SOURCES.map(s => (
-            <button
-              key={s.key}
-              onClick={() => { setActive(s.key); setResults([]); setError('') }}
-              style={{
-                flex: 1,
-                padding: '7px 4px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
-                background: active === s.key ? s.color + '20' : 'var(--surface2)',
-                color: active === s.key ? s.color : 'var(--muted)',
-                borderBottom: `2px solid ${active === s.key ? s.color : 'transparent'}`,
-                transition: 'all 0.18s',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-              }}
-            >
-              <span style={{ fontSize: 14 }}>{s.emoji}</span>
-              <span style={{ fontSize: 9 }}>{s.label}</span>
-            </button>
-          ))}
+          {SOURCES.map(s => {
+            const IconCmp = s.icon
+            const isSelected = active === s.key
+            return (
+              <button
+                key={s.key}
+                onClick={() => { setActive(s.key); setResults([]); setError('') }}
+                style={{
+                  flex: 1,
+                  padding: '8px 4px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+                  background: isSelected ? 'var(--raised)' : 'var(--surface2)',
+                  color: isSelected ? s.color : 'var(--muted)',
+                  borderBottom: `2px solid ${isSelected ? s.color : 'transparent'}`,
+                  transition: 'all 0.15s',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                }}
+              >
+                <IconCmp size={14} />
+                <span style={{ fontSize: 10 }}>{s.label}</span>
+              </button>
+            )
+          })}
         </div>
 
         {/* Search bar */}
@@ -109,14 +138,17 @@ export default function MCPSearch() {
             onChange={e => setQuery(e.target.value)}
             placeholder={src?.placeholder}
             onKeyDown={e => e.key === 'Enter' && search()}
+            style={{
+              flex: 1, padding: '9px 12px', borderRadius: 6,
+              background: 'var(--ink)', border: '1px solid var(--rule-2)',
+              color: 'var(--paper)', fontSize: 12, outline: 'none',
+            }}
           />
           <button className="btn btn-primary" onClick={search} disabled={loading || !query.trim()} style={{ flexShrink: 0 }}>
             {loading ? (
               <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', animation: 'spin 0.7s linear infinite' }} />
             ) : (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-              </svg>
+              <IcoSearch size={13} />
             )}
             Search
           </button>
@@ -124,11 +156,11 @@ export default function MCPSearch() {
 
         {error && (
           <div style={{
-            marginTop: 8, padding: '8px 12px', borderRadius: 8,
-            background: 'var(--red-dim)', border: '1px solid rgba(239,68,68,0.2)',
-            color: 'var(--red)', fontSize: 12,
+            marginTop: 8, padding: '8px 12px', borderRadius: 6,
+            background: 'var(--rust-dim)', border: '1px solid rgba(197,123,90,0.3)',
+            color: 'var(--rust)', fontSize: 11,
           }}>
-            ⚠ {error}
+            {error}
           </div>
         )}
       </div>
@@ -146,9 +178,16 @@ export default function MCPSearch() {
         )}
         {!loading && results.length === 0 && !error && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, color: 'var(--muted)' }}>
-            <div style={{ fontSize: 36 }}>{src?.emoji}</div>
-            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text2)' }}>Search {src?.label}</div>
-            <div style={{ fontSize: 12, textAlign: 'center', maxWidth: 300 }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 8,
+              background: 'var(--panel)', border: '1px solid var(--rule)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: src?.color,
+            }}>
+              {React.createElement(src?.icon || IcoSearch, { size: 20 })}
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--paper-2)' }}>Search {src?.label}</div>
+            <div style={{ fontSize: 11, textAlign: 'center', maxWidth: 360, color: 'var(--muted)', lineHeight: 1.5 }}>
               {src?.placeholder}
             </div>
           </div>
@@ -165,49 +204,58 @@ function ResultCard({ result, source, color, index }) {
   const [expanded, setExpanded] = useState(false)
 
   const title = result.title || result.name || result.id
-  const desc  = result.summary || result.description
-  const url   = result.url
-  const shortDesc = typeof desc === 'string' ? desc.slice(0, 180) + (desc.length > 180 ? '…' : '') : ''
+  const desc  = result.tldr || result.summary || result.description || result.abstract
+  const url   = result.url || result.pdf_url
+  const shortDesc = typeof desc === 'string' ? desc.slice(0, 200) + (desc.length > 200 ? '…' : '') : ''
   const fullDesc  = typeof desc === 'string' ? desc : ''
 
   return (
     <div
       className="card animate-fade"
-      style={{ animationDelay: `${index * 0.06}s` }}
+      style={{
+        animationDelay: `${index * 0.05}s`,
+        background: 'var(--panel)',
+        border: '1px solid var(--rule)',
+        borderRadius: 8,
+        padding: '12px 14px',
+      }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
         <a
           href={url} target="_blank" rel="noreferrer"
           style={{
-            color: color || 'var(--accent2)',
+            color: 'var(--paper)',
             fontWeight: 600, fontSize: 13, textDecoration: 'none',
             lineHeight: 1.4, flex: 1,
           }}
-          onMouseEnter={e => e.target.style.textDecoration = 'underline'}
-          onMouseLeave={e => e.target.style.textDecoration = 'none'}
+          onMouseEnter={e => e.target.style.color = 'var(--brass)'}
+          onMouseLeave={e => e.target.style.color = 'var(--paper)'}
         >
           {title}
         </a>
-        <a href={url} target="_blank" rel="noreferrer"
-          style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            padding: '3px 10px', borderRadius: 6, flexShrink: 0,
-            background: (color || '#6366f1') + '18',
-            border: `1px solid ${(color || '#6366f1')}30`,
-            color: color || 'var(--accent2)', fontSize: 10, fontWeight: 600,
-            textDecoration: 'none', transition: 'all 0.15s',
-          }}
-        >
-          Open ↗
-        </a>
+        {url && (
+          <a href={url} target="_blank" rel="noreferrer"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '3px 9px', borderRadius: 4, flexShrink: 0,
+              background: 'var(--brass-dim)',
+              border: '1px solid var(--brass-line)',
+              color: 'var(--brass-2)', fontSize: 10, fontWeight: 600,
+              textDecoration: 'none', transition: 'all 0.15s',
+            }}
+          >
+            <span>Open</span>
+            <IcoExt size={10} />
+          </a>
+        )}
       </div>
 
       {fullDesc && (
-        <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.6, marginBottom: 8 }}>
+        <div style={{ color: 'var(--paper-2)', fontSize: 12, lineHeight: 1.6, marginBottom: 8 }}>
           {expanded ? fullDesc : shortDesc}
-          {fullDesc.length > 180 && (
+          {fullDesc.length > 200 && (
             <button onClick={() => setExpanded(e => !e)} style={{
-              background: 'none', border: 'none', color: 'var(--accent2)',
+              background: 'none', border: 'none', color: 'var(--brass)',
               cursor: 'pointer', fontSize: 11, padding: '0 4px', fontFamily: 'inherit',
             }}>
               {expanded ? ' show less' : ' more'}
@@ -216,30 +264,39 @@ function ResultCard({ result, source, color, index }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
-        {source === 'arxiv' && result.published && (
-          <span className="tag tag-orange">{result.published}</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        {result.citations != null && (
+          <span className="tag" style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.25)', fontWeight: 600 }}>
+            {result.citations.toLocaleString()} citations
+          </span>
         )}
-        {source === 'arxiv' && result.authors?.length > 0 && (
-          <span className="tag" style={{ background: 'var(--surface3)', color: 'var(--text2)' }}>
-            {result.authors.slice(0, 2).join(', ')}{result.authors.length > 2 ? ' +' + (result.authors.length - 2) : ''}
+        {result.venue && (
+          <span className="tag" style={{ background: 'var(--surface2)', color: 'var(--paper-2)' }}>
+            {result.venue}
+          </span>
+        )}
+        {result.year && (
+          <span className="tag tag-accent">{result.year}</span>
+        )}
+        {result.published && (
+          <span className="tag tag-accent">{result.published}</span>
+        )}
+        {result.authors?.length > 0 && (
+          <span className="tag" style={{ background: 'var(--surface3)', color: 'var(--muted)' }}>
+            {result.authors.slice(0, 3).join(', ')}{result.authors.length > 3 ? ` +${result.authors.length - 3}` : ''}
           </span>
         )}
         {source === 'github' && result.language && (
-          <span className="tag tag-green">{result.language}</span>
+          <span className="tag" style={{ background: 'var(--moss-dim)', color: 'var(--moss)' }}>{result.language}</span>
         )}
-        {source === 'github' && (
-          <span className="tag tag-orange">★ {result.stars?.toLocaleString()}</span>
+        {source === 'github' && result.stars != null && (
+          <span className="tag tag-accent">⭐ {result.stars.toLocaleString()}</span>
         )}
         {(source === 'hf_data' || source === 'hf_model') && (
-          <span className="tag tag-purple">↓ {result.downloads?.toLocaleString() ?? '?'}</span>
+          <span className="tag" style={{ background: 'var(--surface2)', color: '#c084fc' }}>
+            ↓ {result.downloads?.toLocaleString() ?? '?'} dl
+          </span>
         )}
-        {result.pipeline_tag && (
-          <span className="tag tag-accent">{result.pipeline_tag}</span>
-        )}
-        {result.tags?.slice(0, 3).map(t => (
-          <span key={t} className="tag" style={{ background: 'var(--surface3)', color: 'var(--text2)', fontSize: 10 }}>{t}</span>
-        ))}
       </div>
     </div>
   )

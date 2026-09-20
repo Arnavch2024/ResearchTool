@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { sendChat } from '../services/api'
 import { useChatHistory } from '../hooks/useChatHistory'
-import { IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoSend, IcoUser, IcoBot, IcoExpand, IcoExt } from './Icons'
+import { IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoSend, IcoUser, IcoBot, IcoExpand, IcoExt, IcoScholar } from './Icons'
 
 const STARTERS_WITH_DOC = [
   { icon: IcoPaper,  text: 'What is the main contribution of this paper?' },
@@ -22,10 +22,12 @@ const STARTERS_NO_DOC = [
 ]
 
 const TOOL_META = {
-  arxiv:       { icon: IcoSearch, label: 'ArXiv papers',        color: 'var(--slate)' },
-  github:      { icon: IcoCode,   label: 'GitHub repos',        color: 'var(--brass-2)' },
-  hf_datasets: { icon: IcoBox,    label: 'HuggingFace datasets', color: 'var(--brass)' },
-  hf_models:   { icon: IcoBox,    label: 'HuggingFace models',   color: 'var(--moss)' },
+  semantic_scholar: { icon: IcoScholar, label: 'Semantic Scholar', color: 'var(--brass)' },
+  scholar:          { icon: IcoScholar, label: 'Semantic Scholar', color: 'var(--brass)' },
+  arxiv:            { icon: IcoSearch,  label: 'ArXiv papers',     color: 'var(--slate)' },
+  github:           { icon: IcoCode,    label: 'GitHub repos',     color: 'var(--brass-2)' },
+  hf_datasets:      { icon: IcoBox,     label: 'HuggingFace datasets', color: 'var(--brass)' },
+  hf_models:        { icon: IcoBox,     label: 'HuggingFace models',   color: 'var(--moss)' },
 }
 
 const TYPE_COLORS = {
@@ -44,6 +46,7 @@ function TypingIndicator({ query }) {
   const steps = useMemo(() => {
     const q = (query || '').toLowerCase()
     const list = ['Routing query']
+    if (/scholar|semantic|citation|cited|impact|peer|journal|conference/.test(q)) list.push('Searching Scholar')
     if (/paper|arxiv|research|publication|survey|literature/.test(q)) list.push('Searching ArXiv')
     if (/github|code|implementation|repo/.test(q)) list.push('Searching GitHub')
     if (/dataset|benchmark/.test(q)) list.push('Searching HuggingFace')
@@ -158,11 +161,19 @@ function MCPResultCards({ toolCalls }) {
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--paper)', marginBottom: 3, lineHeight: 1.4 }}>
                         {r.title || r.name || r.id}
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
                         {r.authors?.slice(0, 2).map((a, j) => (
                           <span key={j} style={{ fontSize: 10, color: 'var(--muted)' }}>{a}</span>
                         ))}
                         {r.year && <span style={{ fontSize: 10, color: 'var(--muted)' }}>· {r.year}</span>}
+                        {r.citations != null && (
+                          <span className="tag tag-accent" style={{ color: '#fbbf24', background: 'rgba(251,191,36,0.1)' }}>
+                            {r.citations.toLocaleString()} citations
+                          </span>
+                        )}
+                        {r.venue && (
+                          <span style={{ fontSize: 10, color: 'var(--paper-2)' }}>· {r.venue}</span>
+                        )}
                         {r.stars != null && (
                           <span style={{ fontSize: 10, color: 'var(--brass)' }}>{r.stars.toLocaleString()} stars</span>
                         )}

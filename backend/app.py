@@ -21,6 +21,7 @@ from rag.pipeline import (
     FAST_MODEL,
 )
 from mcp.arxiv_tool import search_arxiv
+from mcp.semantic_scholar_tool import search_semantic_scholar
 from mcp.github_tool import search_github
 from mcp.huggingface_tool import search_datasets, search_models
 from security import (
@@ -102,9 +103,10 @@ def strip_code_fences(text: str) -> str:
 # ─── Intent Router ────────────────────────────────────────────────────────────
 
 # Keyword signal sets — checked before any LLM call (zero latency)
+SCHOLAR_SIGNALS = {"scholar", "semantic scholar", "citation", "citations", "cited by", "influential", "impact", "peer-reviewed", "peer reviewed", "openalex", "s2", "journal", "conference"}
 ARXIV_SIGNALS  = {"paper", "papers", "arxiv", "research", "publication", "published",
                   "cite", "citing", "survey", "surveys", "literature", "preprint",
-                  "related work", "academic", "journal", "conference", "findings"}
+                  "related work", "academic", "findings"}
 GITHUB_SIGNALS = {"github", "code", "implementation", "implementations", "repo",
                   "repos", "repository", "repositories", "library", "libraries",
                   "codebase", "open source", "open-source", "project"}
@@ -129,6 +131,7 @@ def _clean_search_query(query: str) -> str:
     to_remove = [
         "show me", "find papers on", "find paper on", "find", "search for", "search", "look for",
         "are there", "tell me about", "is there", "any", "please", "can you", "could you",
+        "semantic scholar", "scholar", "openalex", "s2", "citation", "citations", "cited by", "influential", "impact", "peer-reviewed", "peer reviewed",
         "arxiv", "paper", "papers", "research", "publication", "published", "cite", "citing", "survey", "surveys", "literature", "preprint", "academic", "journal", "conference", "findings",
         "github", "code", "implementation", "implementations", "repo", "repos", "repository", "repositories", "library", "libraries", "codebase", "open source", "open-source", "project",
         "dataset", "datasets", "training data", "benchmark", "benchmarks", "corpus", "corpora",
@@ -157,6 +160,8 @@ def _keyword_route(query: str) -> dict | None:
 
     # MCP tool detection
     tools = []
+    if any(sig in q for sig in SCHOLAR_SIGNALS):
+        tools.append("semantic_scholar")
     if any(sig in q for sig in ARXIV_SIGNALS):
         tools.append("arxiv")
     if any(sig in q for sig in GITHUB_SIGNALS):
@@ -182,7 +187,8 @@ Classify the user query into the most appropriate intent.
 
 Available intents:
 - "rag": Answer from the uploaded research paper document
-- "arxiv": Search academic papers on ArXiv
+- "scholar": Search 200M+ peer-reviewed papers on Semantic Scholar / OpenAlex (citations & venues)
+- "arxiv": Search academic preprints on ArXiv
 - "github": Search code repositories on GitHub
 - "hf_datasets": Search HuggingFace datasets
 - "hf_models": Search HuggingFace model hub
@@ -190,7 +196,7 @@ Available intents:
 - "clarify": Query is too vague/ambiguous to act on
 
 Rules:
-- Multiple tools can apply (e.g., ["arxiv", "github"])
+- Multiple tools can apply (e.g., ["semantic_scholar", "arxiv", "github"])
 - Prefer "rag" when query is about understanding content from a paper
 - Use "clarify" ONLY when the query is genuinely too short/vague to classify
 - "architecture" for requests to visualize systems, pipelines, or model structures
@@ -198,7 +204,7 @@ Rules:
 Output ONLY valid JSON (no markdown, no explanation):
 {
   "intent": "rag|mcp|architecture|clarify",
-  "tools": ["arxiv", "github", "hf_datasets", "hf_models"],
+  "tools": ["semantic_scholar", "arxiv", "github", "hf_datasets", "hf_models"],
   "search_query": "cleaned search query for external tools",
   "clarify_question": "Short clarifying question (only if intent=clarify)"
 }"""
@@ -219,8 +225,9 @@ Output ONLY valid JSON (no markdown, no explanation):
         tools  = result.get("tools", [])
 
         # Normalise: if intent is a tool name, convert to "mcp"
-        if intent in ("arxiv", "github", "hf_datasets", "hf_models"):
-            tools = [intent] + [t for t in tools if t != intent]
+        if intent in ("semantic_scholar", "scholar", "arxiv", "github", "hf_datasets", "hf_models"):
+            norm_tool = "semantic_scholar" if intent in ("semantic_scholar", "scholar") else intent
+            tools = [norm_tool] + [t for t in tools if t != norm_tool]
             intent = "mcp"
 
         return {
@@ -258,10 +265,12 @@ def intent_router(query: str, has_doc: bool) -> dict:
 # ─── MCP Tool Dispatcher ──────────────────────────────────────────────────────
 
 TOOL_LABELS = {
-    "arxiv":       "ArXiv Papers",
-    "github":      "GitHub Repos",
-    "hf_datasets": "HuggingFace Datasets",
-    "hf_models":   "HuggingFace Models",
+    "semantic_scholar": "Semantic Scholar Papers",
+    "scholar":          "Semantic Scholar Papers",
+    "arxiv":            "ArXiv Papers",
+    "github":           "GitHub Repos",
+    "hf_datasets":      "HuggingFace Datasets",
+    "hf_models":        "HuggingFace Models",
 }
 
 
@@ -270,7 +279,9 @@ def _run_mcp_tools(tools: list[str], query: str) -> tuple[list[dict], str]:
 
     def _call(tool_name: str) -> dict:
         try:
-            if tool_name == "arxiv":
+            if tool_name in ("semantic_scholar", "scholar"):
+                return {"tool": "semantic_scholar", "results": search_semantic_scholar(query, max_results=4)}
+            elif tool_name == "arxiv":
                 return {"tool": "arxiv", "results": search_arxiv(query, max_results=4)}
             elif tool_name == "github":
                 return {"tool": "github", "results": search_github(query, max_results=4)}
@@ -283,7 +294,7 @@ def _run_mcp_tools(tools: list[str], query: str) -> tuple[list[dict], str]:
             return {"tool": tool_name, "results": [], "error": str(e)}
 
     tool_calls: list[dict] = []
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         futures = {ex.submit(_call, t): t for t in tools}
         for future in as_completed(futures):
             tool_calls.append(future.result())
@@ -297,7 +308,14 @@ def _run_mcp_tools(tools: list[str], query: str) -> tuple[list[dict], str]:
             continue
         block = f"=== {TOOL_LABELS.get(tool, tool).upper()} ===\n"
         for i, r in enumerate(results, 1):
-            if tool == "arxiv":
+            if tool in ("semantic_scholar", "scholar"):
+                block += f"{i}. {r.get('title','?')} ({r.get('year','?')}) [Citations: {r.get('citations',0):,} | Venue: {r.get('venue','?')}]\n"
+                block += f"   Authors: {', '.join(r.get('authors', []))}\n"
+                block += f"   URL: {r.get('url','')}\n"
+                tldr = r.get("tldr") or r.get("summary") or ""
+                if tldr:
+                    block += f"   Summary/TL;DR: {tldr[:280]}...\n"
+            elif tool == "arxiv":
                 block += f"{i}. {r.get('title','?')} ({r.get('year','?')})\n"
                 block += f"   Authors: {', '.join(r.get('authors', []))}\n"
                 block += f"   URL: {r.get('url','')}\n"
@@ -769,7 +787,19 @@ def clear_session(session_id):
     return jsonify({"message": "Session cleared"})
 
 
-# ─── MCP Tool Endpoints (kept for direct access / debugging) ──────────────────
+@app.route("/api/mcp/scholar", methods=["GET", "POST"])
+@app.route("/api/search/scholar", methods=["GET", "POST"])
+@limiter.limit("30 per minute")
+def scholar():
+    query = request.args.get("q") or (request.json.get("query") if request.is_json else "") or ""
+    if not query:
+        return jsonify({"error": "Missing query param 'q' or json 'query'"}), 400
+    try:
+        n = int(request.args.get("n", 6))
+        return jsonify({"results": search_semantic_scholar(query, max_results=n)})
+    except Exception as e:
+        return jsonify({"error": f"Semantic Scholar search failed: {str(e)}"}), 502
+
 
 @app.route("/api/mcp/arxiv", methods=["GET"])
 @limiter.limit("30 per minute")
