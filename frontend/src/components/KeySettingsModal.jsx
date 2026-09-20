@@ -12,6 +12,7 @@ import {
   IcoClock,
   IcoRefresh,
   IcoAlert,
+  IcoActivity,
 } from './Icons'
 
 function formatNumber(num) {
