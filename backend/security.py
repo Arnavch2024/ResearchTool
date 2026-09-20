@@ -64,6 +64,33 @@ def create_limiter(app):
     return limiter
 
 
+# Groq API Key pattern
+_GROQ_KEY_RE = re.compile(r"^gsk_[a-zA-Z0-9_\-]{20,128}$")
+
+# Pattern to scrub sensitive keys from logs and error messages
+_SECRET_SCRUB_RE = re.compile(
+    r"(gsk_[a-zA-Z0-9_\-]{16,}|ghp_[a-zA-Z0-9_\-]{16,}|Bearer\s+[a-zA-Z0-9_\-\.]{20,})",
+    re.IGNORECASE,
+)
+
+
+def scrub_secrets(text: str) -> str:
+    """Redact any API keys, tokens, or JWTs from text, logs, or error responses."""
+    if not text or not isinstance(text, str):
+        return text
+    return _SECRET_SCRUB_RE.sub("[REDACTED_SECRET]", text)
+
+
+def validate_groq_api_key(api_key: str | None) -> tuple[bool, str]:
+    """Validate format of provided Groq API key."""
+    if not api_key:
+        return False, "API key is required."
+    clean = api_key.strip()
+    if not _GROQ_KEY_RE.match(clean):
+        return False, "Invalid Groq API key format. Key must start with 'gsk_' and contain only alphanumeric characters."
+    return True, ""
+
+
 # ─── Security Headers ────────────────────────────────────────────────────────
 
 def register_security_headers(app):
@@ -77,7 +104,7 @@ def register_security_headers(app):
         response.headers["X-Frame-Options"] = "DENY"
         # XSS filter (legacy browsers)
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        # Referrer policy
+        # Referrer policy (never leak headers or URLs on cross-origin navigation)
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         # Disable dangerous browser features
         response.headers["Permissions-Policy"] = (
@@ -92,10 +119,18 @@ def register_security_headers(app):
             "img-src 'self' data: blob:; "
             "connect-src 'self';"
         )
-        # Prevent caching of API responses (privacy)
+        # CORS allowed headers
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, Authorization, X-Groq-Api-Key, X-Api-Key"
+        )
+        # Inform proxies that responses vary by user key and auth
+        response.headers["Vary"] = "Authorization, X-Groq-Api-Key, Accept-Encoding"
+
+        # Prevent caching of API responses (zero leak guarantee)
         if request.path.startswith("/api"):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
         return response
 
 

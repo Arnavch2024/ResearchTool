@@ -26,6 +26,7 @@ from mcp.huggingface_tool import search_datasets, search_models
 from security import (
     create_limiter, register_security_headers,
     validate_session_id, validate_query, sanitize_query, validate_pdf_file,
+    validate_groq_api_key, scrub_secrets,
     touch_session, start_session_cleanup, check_session_capacity,
     session_timestamps, ALLOWED_ORIGINS,
 )
@@ -34,7 +35,12 @@ from auth import auth_bp, login_required
 from db import get_db, ping_db
 
 app = Flask(__name__)
-CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=False)
+CORS(
+    app,
+    origins=ALLOWED_ORIGINS,
+    allow_headers=["Content-Type", "Authorization", "X-Groq-Api-Key", "X-Api-Key"],
+    supports_credentials=False,
+)
 
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex())
@@ -58,12 +64,15 @@ _groq_client = None
 
 
 def get_request_groq_key() -> str | None:
-    """Extract Groq API key from request headers if present, else fallback to env."""
+    """Extract Groq API key from request headers if present and valid format, else fallback to env."""
     from flask import has_request_context
     if has_request_context():
         custom_key = request.headers.get("X-Groq-Api-Key") or request.headers.get("X-Api-Key")
         if custom_key and custom_key.strip():
-            return custom_key.strip()
+            clean_key = custom_key.strip()
+            valid, _ = validate_groq_api_key(clean_key)
+            if valid:
+                return clean_key
     return os.environ.get("GROQ_API_KEY")
 
 
@@ -848,9 +857,15 @@ def test_key():
     )
     if not api_key:
         return jsonify({"error": "No API key provided in X-Groq-Api-Key header"}), 400
+
+    clean_key = api_key.strip()
+    valid, err = validate_groq_api_key(clean_key)
+    if not valid:
+        return jsonify({"valid": False, "error": err}), 400
+
     try:
         from groq import Groq
-        client = Groq(api_key=api_key.strip())
+        client = Groq(api_key=clean_key)
         resp = client.chat.completions.create(
             model=FAST_MODEL,
             messages=[{"role": "user", "content": "ping"}],
@@ -862,7 +877,8 @@ def test_key():
             "status": "connected",
         })
     except Exception as e:
-        return jsonify({"valid": False, "error": str(e)}), 400
+        safe_err = scrub_secrets(str(e))
+        return jsonify({"valid": False, "error": safe_err}), 400
 
 
 @app.route("/health")
