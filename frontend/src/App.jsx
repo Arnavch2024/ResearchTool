@@ -10,7 +10,7 @@ import KeySettingsModal from './components/KeySettingsModal'
 import { ToastProvider } from './components/Toast'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { clearSession } from './services/api'
-import { Mark, IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoClose } from './components/Icons'
+import { Mark, IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoClose, IcoKey } from './components/Icons'
 
 const SESSION_ID = uuidv4()
 
@@ -98,9 +98,9 @@ function Workspace() {
           <button
             className={`nav-key-badge ${hasApiKey ? 'is-set' : 'is-missing'}`}
             onClick={() => setShowKeyModal(true)}
-            title={hasApiKey ? 'Groq API Key Active in IndexedDB (Click to manage)' : 'Click to configure your Groq API Key'}
+            title={hasApiKey ? 'Groq API Key Active in IndexedDB (Click to view rate limits & usage)' : 'Click to configure your Groq API Key'}
           >
-            <span className="key-badge-icon">🔑</span>
+            <span className="key-badge-icon"><IcoKey size={13} /></span>
             <span>{hasApiKey ? 'Groq Key: Set' : 'Set API Key'}</span>
             <span className={`key-status-dot ${hasApiKey ? 'dot-active' : 'dot-warn'}`} />
           </button>

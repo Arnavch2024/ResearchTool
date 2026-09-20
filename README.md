@@ -29,11 +29,11 @@
   - **🐙 GitHub**: Find open-source codebases, libraries, and model implementations.
   - **🤗 HuggingFace**: Discover dataset splits and pre-trained model weights.
 
-### 4. 🔑 Bring Your Own Key (BYOK) with AES-GCM 256-bit IndexedDB
+### 4. 🔑 Bring Your Own Key (BYOK) & Live Rate Limit Quota Meter
 - **Zero Server-Side Key Storage**: Users supply their own Groq API keys without server billing overhead.
 - **Client-Side Encryption**: Keys are encrypted via **Web Crypto API (AES-GCM 256-bit)** using PBKDF2 key derivation and stored in the browser's `ResearchRAG_Vault` IndexedDB.
+- **Real-Time Quota Telemetry**: Dynamic visual progress meters track **Daily Requests (RPD)** and **Tokens Per Minute (TPM)** directly from Groq's `x-ratelimit-*` headers with live countdown reset timers.
 - **Persistent & Ephemeral**: Keys persist across browser reloads while logged in, and are **automatically dropped from IndexedDB upon logout**.
-- **Real-Time Verification**: Built-in verification testing before saving.
 
 ### 5. 🛡️ Enterprise-Grade Privacy & Security Shield
 - **Zero Prompt Training**: Prompts and uploaded documents are never used for AI model training.

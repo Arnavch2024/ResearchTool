@@ -846,10 +846,41 @@ def internal_error(e):
     return jsonify({"error": "Internal server error"}), 500
 
 
+def _extract_groq_telemetry(headers: dict) -> dict:
+    """Safely parse Groq rate limit and quota headers from response."""
+    def _to_int(val, default=0):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return default
+
+    limit_reqs = _to_int(headers.get("x-ratelimit-limit-requests"))
+    rem_reqs = _to_int(headers.get("x-ratelimit-remaining-requests"))
+    limit_tokens = _to_int(headers.get("x-ratelimit-limit-tokens"))
+    rem_tokens = _to_int(headers.get("x-ratelimit-remaining-tokens"))
+    reset_reqs = headers.get("x-ratelimit-reset-requests", "0s")
+    reset_tokens = headers.get("x-ratelimit-reset-tokens", "0s")
+
+    reqs_pct = round((rem_reqs / limit_reqs * 100), 1) if limit_reqs > 0 else 100.0
+    tokens_pct = round((rem_tokens / limit_tokens * 100), 1) if limit_tokens > 0 else 100.0
+
+    return {
+        "limit_requests": limit_reqs,
+        "remaining_requests": rem_reqs,
+        "requests_pct": reqs_pct,
+        "reset_requests": reset_reqs,
+        "limit_tokens": limit_tokens,
+        "remaining_tokens": rem_tokens,
+        "tokens_pct": tokens_pct,
+        "reset_tokens": reset_tokens,
+    }
+
+
 @app.route("/api/test-key", methods=["POST"])
-@limiter.limit("20 per minute")
+@app.route("/api/key-usage", methods=["GET", "POST"])
+@limiter.limit("30 per minute")
 def test_key():
-    """Verify user's provided Groq API key with a fast 1-token test call."""
+    """Verify user's provided Groq API key and fetch real-time quota & rate-limit telemetry."""
     api_key = (
         request.headers.get("X-Groq-Api-Key")
         or request.headers.get("X-Api-Key")
@@ -866,15 +897,18 @@ def test_key():
     try:
         from groq import Groq
         client = Groq(api_key=clean_key)
-        resp = client.chat.completions.create(
+        raw_resp = client.chat.completions.with_raw_response.create(
             model=FAST_MODEL,
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=1,
         )
+        telemetry = _extract_groq_telemetry(dict(raw_resp.headers))
+
         return jsonify({
             "valid": True,
             "model": FAST_MODEL,
             "status": "connected",
+            "usage": telemetry,
         })
     except Exception as e:
         safe_err = scrub_secrets(str(e))

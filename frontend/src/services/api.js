@@ -195,3 +195,19 @@ export async function testGroqApiKey(apiKey) {
   }
   return data
 }
+
+export async function fetchKeyUsage(apiKey) {
+  const res = await fetch(`${BASE}/key-usage`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Groq-Api-Key': apiKey,
+      ...getAuthHeaders(),
+    },
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to fetch quota telemetry')
+  }
+  return data
+}
