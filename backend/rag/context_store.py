@@ -11,6 +11,8 @@ interchangeably.
 
 from rank_bm25 import BM25Okapi
 
+from .text_utils import tokenize
+
 
 class ContextStore:
     """Page-level context store using BM25 ranking (no embeddings)."""
@@ -32,19 +34,20 @@ class ContextStore:
         self.full_text = full_text
 
         if self.pages:
-            tokenized = [p["text"].lower().split() for p in self.pages]
+            tokenized = [tokenize(p["text"]) for p in self.pages]
             self.bm25 = BM25Okapi(tokenized)
 
         self._ready = True
 
-    def search(self, query: str, max_chars: int = 120_000) -> list[dict]:
-        """Select the most relevant pages up to max_chars.
+    def search(self, query: str, top_k: int | None = None, max_chars: int = 120_000) -> list[dict]:
+        """Select the most relevant pages.
 
         For short documents (total text < max_chars), returns ALL pages
         in document order — no information is lost.
 
         For longer documents, BM25-ranks pages by relevance and fills
-        the context window greedily.
+        the context window greedily. When `top_k` is given, at most that
+        many pages are returned (used by the page-level RAG path).
 
         Returns:
             List of {id: page_number, text: page_text, score: bm25_score}
@@ -57,16 +60,17 @@ class ContextStore:
 
         # Short doc — return everything in document order
         if total_len <= max_chars:
+            pages = self.pages if top_k is None else self.pages[:top_k]
             return [
                 {"id": p["page"], "text": p["text"], "score": 1.0}
-                for p in self.pages
+                for p in pages
             ]
 
         # Long doc — BM25 rank, then fill greedily
         if self.bm25 is None:
             return []
 
-        scores = self.bm25.get_scores(query.lower().split())
+        scores = self.bm25.get_scores(tokenize(query))
 
         scored_pages = []
         for i, page in enumerate(self.pages):
@@ -79,6 +83,9 @@ class ContextStore:
 
         # Sort by BM25 score descending
         scored_pages.sort(key=lambda x: x["score"], reverse=True)
+
+        if top_k is not None:
+            scored_pages = scored_pages[:top_k]
 
         # Fill up to max_chars
         selected = []
@@ -110,7 +117,7 @@ class ContextStore:
                 for p in self.pages[:top_k]
             ]
 
-        scores = self.bm25.get_scores(query.lower().split())
+        scores = self.bm25.get_scores(tokenize(query))
         scored = [
             {"id": self.pages[i]["page"], "text": self.pages[i]["text"],
              "score": float(scores[i])}

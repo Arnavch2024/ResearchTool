@@ -544,7 +544,7 @@ def upload_pdf():
         num_chunks = len(parsed["pages"])
     else:
         # Vector RAG — standard chunking + FAISS for text-only PDFs
-        chunks = split_text(parsed["text"], chunk_size=512, chunk_overlap=64)
+        chunks = split_text(parsed["text"])
         vs = VectorStore()
         vs.build(chunks)
         stores[session_id] = vs

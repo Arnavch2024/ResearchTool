@@ -3,6 +3,7 @@ RAG pipeline: retrieve → rerank → generate.
 Master system prompt covers: paper Q&A, implementation guidance, external source synthesis.
 """
 import os
+import re
 from typing import Optional
 from groq import Groq
 from .vectorstore import VectorStore
@@ -135,6 +136,42 @@ def build_prompt(
     )
 
 
+def _dedupe_chunks(chunks: list[dict]) -> list[dict]:
+    """Drop near-duplicate chunks that arise from overlapping splits.
+
+    Chunks are compared on a whitespace-normalized prefix so paraphrased
+    overlap regions (which differ only by surrounding text) collapse.
+    """
+    seen = set()
+    out = []
+    for c in chunks:
+        key = re.sub(r"\s+", " ", c["text"]).strip().lower()[:280]
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
+def _expand_neighbors(top_chunks: list[dict], all_chunks: list[dict], window: int = 1) -> list[dict]:
+    """Add the chunks immediately surrounding the top-ranked chunk.
+
+    Answers frequently depend on a sentence that lands just across a chunk
+    boundary. Restoring the neighbours of the best chunk keeps that context
+    without widening the whole result set. Output is in document order.
+    """
+    if not top_chunks or not all_chunks:
+        return top_chunks
+    by_id = {c["id"]: c for c in all_chunks}
+    selected = {c["id"] for c in top_chunks}
+    best_id = top_chunks[0]["id"]
+    for delta in range(-window, window + 1):
+        nid = best_id + delta
+        if nid in by_id:
+            selected.add(nid)
+    return [by_id[i] for i in sorted(selected)]
+
+
 def answer_query(
     query: str,
     vector_store: VectorStore,
@@ -148,10 +185,11 @@ def answer_query(
     Message order: [system] → [history (last 3 turns)] → [user+context]
     """
     # Retrieve
-    candidates = vector_store.search(query, top_k=15)
+    candidates = _dedupe_chunks(vector_store.search(query, top_k=15))
 
-    # Rerank
+    # Rerank, then restore the context immediately around the best chunk
     top_chunks = rerank(query, candidates, top_k=5)
+    top_chunks = _expand_neighbors(top_chunks, vector_store.chunks)
 
     # Guard: empty / corrupted PDF
     if not top_chunks:
@@ -412,8 +450,9 @@ def _messages_with_history(system_prompt: str, history: list, user_content: str,
 def stream_answer_query(query: str, vector_store: VectorStore, history: list = None,
                         mcp_context: str = "", api_key: Optional[str] = None):
     """Streaming vector RAG: retrieve → rerank → stream generated answer."""
-    candidates = vector_store.search(query, top_k=15)
+    candidates = _dedupe_chunks(vector_store.search(query, top_k=15))
     top_chunks = rerank(query, candidates, top_k=5)
+    top_chunks = _expand_neighbors(top_chunks, vector_store.chunks)
 
     if not top_chunks:
         yield {"type": "sources", "sources": []}

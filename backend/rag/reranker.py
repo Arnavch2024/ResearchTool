@@ -2,6 +2,8 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
+from .text_utils import tokenize
+
 _cross_encoder = None
 
 
@@ -12,19 +14,24 @@ def get_cross_encoder():
     return _cross_encoder
 
 
-def rerank(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
+def rerank(query: str, candidates: list[dict], top_k: int = 5,
+           min_keep: int = 3) -> list[dict]:
     """
     Two-stage reranking:
     1. BM25 lexical scoring fused with vector scores
     2. Cross-encoder neural reranking on top candidates
+
+    Candidates the cross-encoder scores below zero (i.e. judged irrelevant)
+    are dropped to keep the context precise, but at least `min_keep` chunks
+    are always retained so the model still has material to answer from.
     """
     if not candidates:
         return []
 
     # Stage 1: BM25 lexical reranking
-    tokenized_corpus = [c["text"].lower().split() for c in candidates]
+    tokenized_corpus = [tokenize(c["text"]) for c in candidates]
     bm25 = BM25Okapi(tokenized_corpus)
-    bm25_scores = bm25.get_scores(query.lower().split())
+    bm25_scores = bm25.get_scores(tokenize(query))
 
     # Normalize BM25 scores to [0,1] using numpy for correctness
     bm25_max = float(np.max(bm25_scores))
@@ -49,4 +56,10 @@ def rerank(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
         c["ce_score"] = float(ce_scores[i])
 
     top_candidates.sort(key=lambda x: x["ce_score"], reverse=True)
-    return top_candidates[:top_k]
+
+    # Drop clearly-irrelevant chunks, but always keep enough context signal
+    relevant = [c for c in top_candidates if c["ce_score"] >= 0.0]
+    if len(relevant) < min_keep:
+        relevant = top_candidates
+
+    return relevant[:top_k]

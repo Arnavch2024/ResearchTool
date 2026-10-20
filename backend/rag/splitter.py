@@ -1,10 +1,15 @@
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
-def split_text(text: str, chunk_size: int = 512, chunk_overlap: int = 64) -> list[dict]:
+def split_text(text: str, chunk_size: int = 1100, chunk_overlap: int = 150) -> list[dict]:
     """
     Split text using LangChain's RecursiveCharacterTextSplitter.
     Returns list of chunks with index metadata.
+
+    Chunk size is tuned for research papers: ~1100 characters keeps a full
+    paragraph or method step together (so citations and equations stay with
+    their surrounding explanation), while the larger overlap preserves
+    continuity across boundaries.
     """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
