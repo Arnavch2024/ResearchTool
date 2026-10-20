@@ -13,3 +13,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local notes (kept out of version control)
+IMPROVEMENTS.md
