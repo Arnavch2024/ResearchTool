@@ -10,6 +10,7 @@ Provides:
 
 import os
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -22,7 +23,22 @@ from db import get_db
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-production")
+_DEFAULT_JWT_SECRET = "change-me-in-production"
+
+# A hardcoded fallback secret is a forgery risk: anyone who knows it can mint
+# valid tokens. If JWT_SECRET is missing (or left at the old default) we
+# generate a strong random secret for this process instead of shipping a
+# publicly-known one. Trade-off: tokens do not survive a restart — set
+# JWT_SECRET in the environment for any real deployment.
+JWT_SECRET = os.environ.get("JWT_SECRET", "").strip()
+if not JWT_SECRET or JWT_SECRET == _DEFAULT_JWT_SECRET:
+    JWT_SECRET = secrets.token_hex(32)
+    print(
+        "[auth] WARNING: JWT_SECRET is unset or uses the insecure default. "
+        "Using a random per-process secret — all tokens will be invalidated on "
+        "restart. Set JWT_SECRET in your environment for production."
+    )
+
 JWT_EXPIRY_DAYS = 7
 
 # ─── Validation ───────────────────────────────────────────────────────────────
