@@ -580,7 +580,7 @@ export default function ChatInterface({ sessionId, hasDoc, onOpenArch }) {
         </div>
         <div style={{ fontSize: 10, color: 'var(--faint)', marginTop: 8, display: 'flex', justifyContent: 'space-between', letterSpacing: '0.04em' }}>
           <span>Enter to send · Shift+Enter for a new line</span>
-          <span style={{ fontFamily: 'var(--mono)' }}>Groq · llama-3.3-70b</span>
+          <span style={{ fontFamily: 'var(--mono)' }}>Groq · gpt-oss-120b</span>
         </div>
       </div>
     </div>

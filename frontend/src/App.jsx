@@ -199,8 +199,7 @@ function Workspace() {
               <ChatInterface
                 sessionId={SESSION_ID}
                 hasDoc={hasDoc}
-                docInfo={docInfo}
-                onOpenArchitecture={handleOpenArchFromChat}
+                onOpenArch={handleOpenArchFromChat}
               />
             </div>
           )}
