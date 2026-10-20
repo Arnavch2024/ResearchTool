@@ -1913,3 +1913,84 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   to { transform: rotate(360deg); }
 }
 
+/* ─── Markdown Rendering (chat answers) ──────────────────────────────────── */
+.md-body { font-size: 13px; line-height: 1.7; color: var(--paper); }
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child { margin-bottom: 0; }
+
+.md-body p { margin: 0 0 10px; }
+
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+  font-family: var(--serif);
+  font-weight: 500;
+  color: var(--paper);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  margin: 16px 0 8px;
+}
+.md-body h1 { font-size: 18px; }
+.md-body h2 { font-size: 16px; }
+.md-body h3 { font-size: 14px; }
+.md-body h4 { font-size: 13px; }
+
+.md-body ul, .md-body ol { margin: 0 0 10px; padding-left: 20px; }
+.md-body li { margin: 3px 0; }
+.md-body li > ul, .md-body li > ol { margin: 3px 0; }
+
+.md-body strong { color: var(--paper); font-weight: 600; }
+.md-body em { font-style: italic; color: var(--paper-2); }
+
+.md-body blockquote {
+  margin: 10px 0;
+  padding: 4px 12px;
+  border-left: 2px solid var(--brass-line);
+  background: var(--brass-dim);
+  border-radius: 0 4px 4px 0;
+  color: var(--paper-2);
+}
+
+.md-body hr { border: none; border-top: 1px solid var(--rule); margin: 14px 0; }
+
+.md-link {
+  color: var(--brass-2);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--brass-line);
+  word-break: break-word;
+}
+.md-link:hover { color: var(--brass); border-bottom-color: var(--brass); }
+
+.md-inline-code {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--rule);
+  color: var(--brass-2);
+  word-break: break-word;
+}
+
+.md-code-block { margin: 10px 0; }
+
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 10px 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.md-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.md-table th, .md-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+.md-table th {
+  background: var(--brass-dim);
+  color: var(--brass-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.md-table tr:last-child td { border-bottom: none; }
+.md-table tbody tr:hover td { background: rgba(255, 255, 255, 0.02); }
+

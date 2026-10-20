@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { sendChat } from '../services/api'
 import { useChatHistory } from '../hooks/useChatHistory'
+import Markdown from './Markdown'
 import { IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoSend, IcoUser, IcoBot, IcoExpand, IcoExt, IcoScholar, IcoTrophy } from './Icons'
 
 const STARTERS_WITH_DOC = [
@@ -368,10 +369,11 @@ function MessageBubble({ msg, index, onExpand, onAnswer }) {
           border: isUser ? '1px solid #9a7d4c' : `1px solid ${meta.isError ? 'rgba(197,123,90,0.35)' : 'var(--rule)'}`,
           color: isUser ? 'var(--brass-ink)' : 'var(--paper)',
           fontSize: 13, lineHeight: 1.7,
-          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          whiteSpace: isUser || meta.isError ? 'pre-wrap' : 'normal',
+          wordBreak: 'break-word',
           boxShadow: isUser ? 'var(--shadow-btn)' : 'none',
         }}>
-          {msg.content}
+          {isUser || meta.isError ? msg.content : <Markdown>{msg.content}</Markdown>}
         </div>
       )}
 
