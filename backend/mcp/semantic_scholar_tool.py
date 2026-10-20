@@ -1,6 +1,5 @@
 import os
 import requests
-import urllib.parse
 
 S2_SEARCH_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 OPENALEX_API = "https://api.openalex.org/works"

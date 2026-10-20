@@ -7,7 +7,6 @@ Supports:
 """
 
 import os
-from datetime import datetime, timezone
 from bson import ObjectId
 from pymongo import MongoClient, ASCENDING
 

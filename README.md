@@ -126,6 +126,37 @@ npm run dev
 
 ---
 
+## 🧪 Testing & CI
+
+The backend ships with a `pytest` suite covering the security validators, the authentication flow, and the RAG components (tokenizer, splitter, prompts, config and the page-level context store).
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+Linting:
+
+```bash
+cd backend  && ruff check .    # Python
+cd frontend && npm run lint    # ESLint
+```
+
+GitHub Actions run on every push and pull request:
+
+| Workflow | Job | What it does |
+|---|---|---|
+| `.github/workflows/ci.yml` | Backend lint | `ruff check .` over the backend |
+| `.github/workflows/ci.yml` | Backend tests | Installs `requirements-dev.txt` and runs the full `pytest` suite |
+| `.github/workflows/ci.yml` | Frontend lint | `npm run lint` (ESLint) |
+| `.github/workflows/ci.yml` | Frontend build | `npm run build` (Vite) |
+| `.github/workflows/rag-tests.yml` | RAG components | Runs the RAG unit tests with light dependencies (no torch / faiss) for a fast signal |
+
+> **Deploying?** Set `JWT_SECRET` in the environment. If it is missing, the backend generates a random per-process secret and all sessions are invalidated whenever the server restarts.
+
+---
+
 ## 🔒 Security & BYOK Architecture
 
 ```
@@ -167,6 +198,9 @@ research-rag/
 │   ├── security.py            # Security headers, rate limiting, and log scrubber
 │   ├── privacy.py             # PII redaction and data privacy policy
 │   ├── requirements.txt       # Python dependencies
+│   ├── requirements-dev.txt   # Test & lint dependencies (pytest, ruff)
+│   ├── ruff.toml              # Ruff lint configuration
+│   ├── tests/                 # pytest suite (security, auth, RAG components)
 │   ├── rag/
 │   │   ├── parser.py          # PyMuPDF parser with visual figure detection
 │   │   ├── splitter.py        # Recursive text chunking
@@ -178,6 +212,9 @@ research-rag/
 │       ├── arxiv_tool.py      # ArXiv search integration
 │       ├── github_tool.py     # GitHub repository search
 │       └── huggingface_tool.py# HuggingFace datasets and models
+│
+├── .github/
+│   └── workflows/         # CI: backend lint/tests, frontend lint/build, RAG tests
 │
 └── frontend/
     ├── src/
