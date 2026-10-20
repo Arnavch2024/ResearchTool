@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +16,10 @@ from rag.context_store import ContextStore
 from rag.pipeline import (
     answer_query,
     answer_query_vectorless,
+    stream_answer_query,
+    stream_answer_query_vectorless,
+    stream_mcp_answer,
+    stream_general_answer,
     get_groq,
     LLM_MODEL,
     FAST_MODEL,
@@ -746,6 +750,146 @@ def chat():
         "rag_mode": None,
         "usage": usage,
     })
+
+
+@app.route("/api/chat/stream", methods=["POST"])
+@limiter.limit("20 per minute")
+@login_required
+def chat_stream():
+    """Streaming (SSE) variant of /api/chat.
+
+    Emits named events as they happen:
+      meta       — {intent, rag_mode, clarify_question?}
+      tool_calls — {tool_calls}          (only when external MCP tools ran)
+      token      — {text}                (incremental answer text)
+      done       — {intent, answer, sources, tool_calls, arch_data, usage, rag_mode}
+      error      — {message}
+    """
+    data = request.json or {}
+    query = (data.get("query") or "").strip()
+    session_id = data.get("session_id", "default")
+
+    if not validate_session_id(session_id):
+        return jsonify({"error": "Invalid session ID format"}), 400
+
+    valid, err = validate_query(query)
+    if not valid:
+        return jsonify({"error": err}), 400
+    query = strip_pii(sanitize_query(query))
+
+    touch_session(session_id)
+
+    vs = stores.get(session_id)
+    cs = context_stores.get(session_id)
+    mode = rag_modes.get(session_id, "vector")
+    has_doc = (vs is not None and vs.is_ready()) or (cs is not None and cs.is_ready())
+    req_key = get_request_groq_key()
+
+    def _sse(event: str, payload: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+    def generate():
+        history = chat_histories.get(session_id, [])
+        _ensure_session(g.user_id, session_id, rag_mode=mode if has_doc else None)
+        try:
+            # ── Step 1: Route ──────────────────────────────────────────────
+            route = intent_router(query, has_doc)
+            intent = route["intent"]
+            rag_mode = mode if has_doc else None
+
+            # ── Step 2a: Clarify ───────────────────────────────────────────
+            if intent == "clarify":
+                clarify_msg = route.get(
+                    "clarify_question",
+                    "What would you like to do? I can answer questions about the paper, "
+                    "search for related research, find code implementations, or draw architecture diagrams.",
+                )
+                yield _sse("meta", {"intent": "clarify", "rag_mode": rag_mode, "clarify_question": clarify_msg})
+                _persist_chat_message(g.user_id, session_id, "user", query, intent="clarify")
+                _persist_chat_message(g.user_id, session_id, "assistant", clarify_msg, intent="clarify")
+                yield _sse("done", {
+                    "intent": "clarify", "rag_mode": rag_mode, "clarify_question": clarify_msg,
+                    "answer": None, "sources": [], "tool_calls": [],
+                })
+                return
+
+            # ── Step 2b: MCP tool calls (concurrent, announced before meta) ─
+            tool_calls: list[dict] = []
+            mcp_context = ""
+            if route.get("tools"):
+                tool_calls, mcp_context = _run_mcp_tools(route["tools"], route.get("search_query", query))
+                yield _sse("tool_calls", {"tool_calls": tool_calls})
+
+            yield _sse("meta", {"intent": intent, "rag_mode": rag_mode})
+
+            # ── Step 2c: Architecture (single-shot JSON, not streamed) ─────
+            if intent == "architecture":
+                arch_store = vs or cs
+                arch_data = _generate_architecture_internal(query, arch_store)
+                arch_title = arch_data.get("title", "Architecture Diagram")
+                n_nodes = len(arch_data.get("nodes", []))
+                answer = (
+                    f"I've generated the **{arch_title}** diagram with {n_nodes} components. "
+                    "Expand the diagram below to explore it interactively."
+                )
+                _persist_chat_message(g.user_id, session_id, "user", query, intent="architecture")
+                _persist_chat_message(g.user_id, session_id, "assistant", answer, intent="architecture", arch_data=arch_data)
+                yield _sse("done", {
+                    "intent": "architecture", "rag_mode": rag_mode, "answer": answer,
+                    "arch_data": arch_data, "sources": [], "tool_calls": [],
+                })
+                return
+
+            # ── Step 3: Pick the streaming generator ───────────────────────
+            if has_doc:
+                stream_iter = (
+                    stream_answer_query_vectorless(query, cs, history, mcp_context=mcp_context, api_key=req_key)
+                    if mode == "vectorless" and cs is not None
+                    else stream_answer_query(query, vs, history, mcp_context=mcp_context, api_key=req_key)
+                )
+                final_intent = intent
+            elif mcp_context:
+                stream_iter = stream_mcp_answer(query, mcp_context, history, api_key=req_key)
+                final_intent = intent
+            else:
+                stream_iter = stream_general_answer(query, history, api_key=req_key)
+                final_intent = "general"
+
+            # ── Step 4: Stream tokens ──────────────────────────────────────
+            acc = ""
+            sources: list = []
+            usage = {"prompt_tokens": 0, "completion_tokens": 0}
+            for ev in stream_iter:
+                if ev["type"] == "token":
+                    acc += ev["text"]
+                    yield _sse("token", {"text": ev["text"]})
+                elif ev["type"] == "sources":
+                    sources = ev["sources"]
+                elif ev["type"] == "usage":
+                    usage = ev["usage"]
+
+            history.append({"role": "user", "content": query})
+            history.append({"role": "assistant", "content": acc})
+            chat_histories[session_id] = history
+            _persist_chat_message(g.user_id, session_id, "user", query, intent=final_intent)
+            _persist_chat_message(g.user_id, session_id, "assistant", acc, intent=final_intent, sources=sources)
+
+            yield _sse("done", {
+                "intent": final_intent, "rag_mode": rag_mode, "answer": acc,
+                "sources": sources, "tool_calls": tool_calls, "usage": usage,
+            })
+        except Exception as e:
+            yield _sse("error", {"message": scrub_secrets(str(e))})
+
+    return Response(
+        stream_with_context(generate()),
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.route("/api/history/<session_id>", methods=["GET"])

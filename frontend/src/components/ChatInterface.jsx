@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
-import { sendChat } from '../services/api'
+import { streamChat } from '../services/api'
 import { useChatHistory } from '../hooks/useChatHistory'
 import Markdown from './Markdown'
 import { IcoPaper, IcoSearch, IcoCode, IcoBox, IcoNodes, IcoWrench, IcoSend, IcoUser, IcoBot, IcoExpand, IcoExt, IcoScholar, IcoTrophy } from './Icons'
@@ -416,9 +416,10 @@ function MessageBubble({ msg, index, onExpand, onAnswer }) {
 }
 
 export default function ChatInterface({ sessionId, hasDoc, onOpenArch }) {
-  const { messages, addMessage, clear } = useChatHistory()
+  const { messages, addMessage, appendToMessage, patchMessage, clear } = useChatHistory()
   const [input, setInput]     = useState('')
   const [loading, setLoading] = useState(false)
+  const [streaming, setStreaming] = useState(false)
   const [lastQuery, setLastQuery] = useState('')
   const bottomRef   = useRef()
   const textareaRef = useRef()
@@ -441,28 +442,57 @@ export default function ChatInterface({ sessionId, hasDoc, onOpenArch }) {
     setLastQuery(q)
     addMessage('user', q)
     setLoading(true)
-    try {
-      const res = await sendChat(q, sessionId)
+    setStreaming(false)
 
-      if (res.intent === 'clarify') {
-        addMessage('assistant', null, {
-          intent: 'clarify',
-          clarify_question: res.clarify_question,
-        })
-      } else {
-        addMessage('assistant', res.answer, {
-          intent:     res.intent,
-          sources:    res.sources,
-          tool_calls: res.tool_calls,
-          arch_data:  res.arch_data,
-          rag_mode:   res.rag_mode,
-          usage:      res.usage,
-        })
-      }
+    let assistantId = null
+    const ensureAssistant = () => {
+      if (!assistantId) assistantId = addMessage('assistant', '', {})
+      return assistantId
+    }
+
+    try {
+      await streamChat(q, sessionId, {
+        meta: (m) => {
+          if (m.intent === 'clarify') {
+            addMessage('assistant', null, {
+              intent: 'clarify',
+              clarify_question: m.clarify_question,
+            })
+          } else {
+            assistantId = addMessage('assistant', '', {
+              intent:   m.intent,
+              rag_mode: m.rag_mode,
+            })
+          }
+        },
+        tool_calls: ({ tool_calls }) => {
+          if (assistantId) patchMessage(assistantId, { tool_calls })
+        },
+        token: ({ text }) => {
+          setStreaming(true)
+          appendToMessage(ensureAssistant(), text)
+        },
+        done: (d) => {
+          if (d.intent === 'clarify') return
+          patchMessage(ensureAssistant(), {
+            content:    d.answer,
+            intent:     d.intent,
+            sources:    d.sources,
+            tool_calls: d.tool_calls,
+            arch_data:  d.arch_data,
+            rag_mode:   d.rag_mode,
+            usage:      d.usage,
+          })
+        },
+        error: ({ message }) => {
+          patchMessage(ensureAssistant(), { content: `Error: ${message}`, isError: true })
+        },
+      })
     } catch (err) {
-      addMessage('assistant', `Error: ${err.message}`, { isError: true })
+      patchMessage(ensureAssistant(), { content: `Error: ${err.message}`, isError: true })
     }
     setLoading(false)
+    setStreaming(false)
   }
 
   function handleKeyDown(e) {
@@ -548,7 +578,7 @@ export default function ChatInterface({ sessionId, hasDoc, onOpenArch }) {
           />
         ))}
 
-        {loading && <TypingIndicator query={lastQuery} />}
+        {loading && !streaming && <TypingIndicator query={lastQuery} />}
         <div ref={bottomRef} />
       </div>
 

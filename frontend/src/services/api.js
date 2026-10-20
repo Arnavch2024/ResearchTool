@@ -104,6 +104,60 @@ export async function clearSession(sessionId) {
   })
 }
 
+function _emitSseEvent(raw, handlers) {
+  let event = 'message'
+  const dataLines = []
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+  }
+  if (!dataLines.length) return
+  let payload
+  try {
+    payload = JSON.parse(dataLines.join('\n'))
+  } catch {
+    return
+  }
+  const handler = handlers[event]
+  if (handler) handler(payload)
+}
+
+/**
+ * Streaming chat over Server-Sent Events. POSTs the query and invokes
+ * handlers[event] as named events arrive: 'meta' | 'tool_calls' | 'token'
+ * | 'done' | 'error'. EventSource can't POST or send headers, so we parse
+ * the response body stream manually.
+ */
+export async function streamChat(query, sessionId, handlers = {}) {
+  const res = await fetch(`${BASE}/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ query, session_id: sessionId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Request failed' }))
+    throw new Error(err.error || 'Request failed')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let sep
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      _emitSseEvent(buffer.slice(0, sep), handlers)
+      buffer = buffer.slice(sep + 2)
+    }
+  }
+  if (buffer.trim()) _emitSseEvent(buffer, handlers)
+}
+
 export async function getChatHistory(sessionId) {
   const res = await fetch(`${BASE}/history/${sessionId}`, {
     headers: { ...getAuthHeaders() },
