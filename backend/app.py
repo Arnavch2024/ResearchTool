@@ -20,10 +20,8 @@ from rag.pipeline import (
     stream_answer_query_vectorless,
     stream_mcp_answer,
     stream_general_answer,
-    get_groq,
-    LLM_MODEL,
-    FAST_MODEL,
 )
+from rag.config import get_groq as _get_groq_client, LLM_MODEL, FAST_MODEL
 from mcp.arxiv_tool import search_arxiv
 from mcp.semantic_scholar_tool import search_semantic_scholar
 from mcp.benchmarks_tool import search_benchmarks_and_sota
@@ -83,12 +81,12 @@ def get_request_groq_key() -> str | None:
 
 
 def get_groq(api_key: str | None = None):
-    """Return a Groq client, prioritizing user-provided per-request API key."""
-    from groq import Groq
-    key = (api_key or "").strip() or get_request_groq_key()
-    if not key:
-        raise ValueError("No Groq API key provided. Please configure your Groq API key in Settings.")
-    return Groq(api_key=key)
+    """Request-aware Groq client.
+
+    Prefers an explicit key, then a per-request header key, then $GROQ_API_KEY.
+    The client factory itself lives in rag.config.
+    """
+    return _get_groq_client((api_key or "").strip() or get_request_groq_key())
 
 
 def strip_code_fences(text: str) -> str:
